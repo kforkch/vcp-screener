@@ -157,13 +157,35 @@ only_b = st.sidebar.checkbox("僅看突破", value=False)
 if st.sidebar.button("🚀 執行全球同步掃描"):
     tickers, bench_code = get_stock_list(market_name)
     
-    # 大盤溫度計
+    # --- 大盤溫度計 ---
+try:
+    # 下載基準指數數據
     bench_df = yf.download(bench_code, period="1y", progress=False, auto_adjust=True)
-    b_series = bench_df['Close'].dropna()
-    b_close = float(b_series.iloc[-1])
-    b_sma50 = float(b_series.rolling(50).mean().iloc[-1])
-    health = "🟢 牛市環境" if b_close > b_sma50 else "🔴 熊市/調整"
     
+    # 判斷數據是否為空
+    if bench_df.empty:
+        st.error(f"⚠️ 無法獲取基準指數 ({bench_code}) 的數據，請檢查網路或代碼。")
+        b_close, b_sma50, health = 0.0, 0.0, "⚪ 數據缺失"
+    else:
+        # 確保提取的是 Close 欄位且移除空值
+        if isinstance(bench_df.columns, pd.MultiIndex):
+            b_series = bench_df['Close'][bench_code].dropna()
+        else:
+            b_series = bench_df['Close'].dropna()
+            
+        if len(b_series) > 0:
+            b_close = float(b_series.iloc[-1])
+            b_sma50 = float(b_series.rolling(50).mean().iloc[-1])
+            health = "🟢 牛市環境" if b_close > b_sma50 else "🔴 熊市/調整"
+        else:
+            b_close, b_sma50, health = 0.0, 0.0, "⚪ 數據不足"
+            
+except Exception as e:
+    st.error(f"🌡️ 大盤溫度計運行出錯: {e}")
+    b_close, b_sma50, health = 0.0, 0.0, "⚪ 系統錯誤"
+
+# 顯示指標 (只有在有數據時才顯示)
+if b_close > 0:
     c1, c2, c3 = st.columns(3)
     c1.metric(f"{market_name} 狀態", health)
     c2.metric("基準指數位置", f"{b_close:.2f}")
