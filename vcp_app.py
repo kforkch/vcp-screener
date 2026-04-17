@@ -61,23 +61,34 @@ def get_stock_list(market):
                 "9888.HK", "9961.HK", "9988.HK", "9999.HK"
             ]
             return hsi_list, "^HSI"
-            
     except Exception as e:
-        st.error(f"獲取名單出錯: {e}")
+        st.error(f"獲取名單失敗: {e}")
         return [], None
 
-# --- 2. SCTR 排名計算 ---
+# --- 2. SCTR 排名計算 (增強穩定性版本) ---
 def calculate_sctr_ranks(tickers):
     try:
         raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
-        data = raw_data['Close'] if 'Close' in raw_data else raw_data
-    except:
+        # 核心修復：強制解鎖 yfinance 的多重索引結構
+        if isinstance(raw_data.columns, pd.MultiIndex):
+            data = raw_data['Close']
+        else:
+            data = raw_data[['Close']] if 'Close' in raw_data else raw_data
+            
+        if data.empty: return {}
+    except Exception as e:
+        st.warning(f"SCTR 下載出錯: {e}")
         return {}
 
     sctr_data = []
     for ticker in tickers:
         try:
-            series = data[ticker].dropna() if isinstance(data, pd.DataFrame) and ticker in data.columns else data.dropna()
+            # 安全提取每隻股票的數列
+            if ticker in data.columns:
+                series = data[ticker].dropna()
+            else:
+                continue
+                
             if len(series) < 200: continue
             
             sma200, sma50 = series.rolling(200).mean().iloc[-1], series.rolling(50).mean().iloc[-1]
@@ -97,6 +108,7 @@ def calculate_sctr_ranks(tickers):
 # --- 3. 核心過濾函數 ---
 def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
     try:
+        # 單獨下載時 yfinance 通常回傳標準格式
         df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
         if df.empty or len(df) < 200: return None
         
@@ -104,11 +116,10 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
         vol = df['Volume']
         curr_p = float(close.iloc[-1])
         
-        sma50 = ta.sma(close, 50).iloc[-1]
-        sma150 = ta.sma(close, 150).iloc[-1]
-        sma200 = ta.sma(close, 200).iloc[-1]
+        sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
         low52, high52 = float(close.min()), float(close.max())
         
+        # Minervini 6/6 趨勢模板
         cond = [
             curr_p > sma150 and curr_p > sma200,
             sma150 > sma200,
@@ -133,68 +144,63 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
             status = f"🔥 {b_days}D突破" if is_breakout else "🚀 強勢向上"
             
             return [ticker, round(curr_p, 2), dist_high, sctr_val, is_tight, vol_ratio, status]
-        return None
-    except: return None
+    except: pass
+    return None
 
-# --- 4. 側邊欄與執行 ---
+# --- 4. UI 邏輯 ---
 st.sidebar.header("🎛️ 系統參數")
 market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美股 (S&P 500)", "中國 A 股 (滬深 300)", "港股 (恒生指數)"])
-min_sctr_val = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 80.0)
+min_sctr_val = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 70.0) # 調低一點點增加看到結果的機會
 b_days = st.sidebar.selectbox("突破檢測天數", [10, 20, 50], index=1)
 only_b = st.sidebar.checkbox("僅看突破", value=False)
 
 if st.sidebar.button("🚀 執行全球同步掃描"):
-    tickers, bench_code = get_stock_list(market_name)
-    
-    # --- 大盤溫度計 (修正後縮進) ---
-    try:
-        bench_df = yf.download(bench_code, period="1y", progress=False, auto_adjust=True)
-        if bench_df.empty:
-            st.error(f"⚠️ 無法獲取基準指數 ({bench_code}) 的數據。")
-            b_close = 0.0
-        else:
-            b_series = bench_df['Close'][bench_code].dropna() if isinstance(bench_df.columns, pd.MultiIndex) else bench_df['Close'].dropna()
-            
-            if len(b_series) > 0:
-                b_close = float(b_series.iloc[-1])
-                b_sma50 = float(b_series.rolling(50).mean().iloc[-1])
-                health = "🟢 牛市環境" if b_close > b_sma50 else "🔴 熊市/調整"
-                
-                c1, c2, c3 = st.columns(3)
-                c1.metric(f"{market_name} 狀態", health)
-                c2.metric("基準指數位置", f"{b_close:.2f}")
-                c3.metric("偏離 50MA", f"{((b_close/b_sma50-1)*100):.2f}%")
-            else:
-                b_close = 0.0
-                st.warning("基準指數數據長度不足。")
-    except Exception as e:
-        st.error(f"🌡️ 大盤溫度計運行出錯: {e}")
-        b_close = 0.0
+    res_tuple = get_stock_list(market_name)
+    if res_tuple:
+        tickers, bench_code = res_tuple
+        
+        # --- 大盤溫度計 ---
+        try:
+            bench_df = yf.download(bench_code, period="1y", progress=False, auto_adjust=True)
+            if not bench_df.empty:
+                b_series = bench_df['Close'][bench_code] if isinstance(bench_df.columns, pd.MultiIndex) else bench_df['Close']
+                b_series = b_series.dropna()
+                if not b_series.empty:
+                    b_close = float(b_series.iloc[-1])
+                    b_sma50 = float(b_series.rolling(50).mean().iloc[-1])
+                    health = "🟢 牛市環境" if b_close > b_sma50 else "🔴 熊市/調整"
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric(f"{market_name} 狀態", health)
+                    c2.metric("大盤收盤", f"{b_close:.2f}")
+                    c3.metric("偏離 50MA", f"{((b_close/b_sma50-1)*100):.2f}%")
+        except Exception as e:
+            st.error(f"溫度計出錯: {e}")
 
-    if b_close > 0:
         st.write("---")
-        st.info(f"📊 正在計算 {market_name} 的 SCTR 排名...")
+        st.info(f"📊 正在掃描 {len(tickers)} 隻股票...")
         sctr_ranks = calculate_sctr_ranks(tickers)
         
-        st.info("🔍 正在檢測個股 VCP 形態...")
-        results = []
-        pb = st.progress(0)
-        for i, t in enumerate(tickers):
-            res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
-            if res and res[3] >= min_sctr_val: results.append(res)
-            pb.progress((i + 1) / len(tickers))
-
-        if results:
-            df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態"])
-            def make_link(t):
-                t_str = str(t)
-                if ".HK" in t_str: return f"https://www.tradingview.com/chart/?symbol=HKEX:{t_str.replace('.HK','').lstrip('0')}"
-                elif ".SS" in t_str or ".SZ" in t_str: return f"https://www.tradingview.com/chart/?symbol={'SSE' if '.SS' in t_str else 'SZSE'}:{t_str.split('.')[0]}"
-                else: return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
-            
-            df['圖表'] = df['代碼'].apply(make_link)
-            df = df.sort_values("SCTR排名", ascending=False)
-            st.dataframe(df, column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, use_container_width=True)
-            st.success(f"找到 {len(df)} 隻標的。")
+        if not sctr_ranks:
+            st.error("無法計算 SCTR 排名，請檢查網路連線或稍後再試。")
         else:
-            st.warning("當前市場環境下無符合標的。")
+            results = []
+            pb = st.progress(0)
+            for i, t in enumerate(tickers):
+                res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
+                if res and res[3] >= min_sctr_val:
+                    results.append(res)
+                pb.progress((i + 1) / len(tickers))
+
+            if results:
+                df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態"])
+                def make_link(t):
+                    t_str = str(t)
+                    if ".HK" in t_str: return f"https://www.tradingview.com/chart/?symbol=HKEX:{t_str.replace('.HK','').lstrip('0')}"
+                    elif ".SS" in t_str or ".SZ" in t_str: return f"https://www.tradingview.com/chart/?symbol={'SSE' if '.SS' in t_str else 'SZSE'}:{t_str.split('.')[0]}"
+                    else: return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
+                
+                df['圖表'] = df['代碼'].apply(make_link)
+                st.dataframe(df.sort_values("SCTR排名", ascending=False), column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, use_container_width=True)
+                st.success(f"成功篩選出 {len(df)} 隻標的。")
+            else:
+                st.warning("當前篩選標準下無符合標的。建議嘗試調低「最低 SCTR 排名」或取消「僅看突破」。")
