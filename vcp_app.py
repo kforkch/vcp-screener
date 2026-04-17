@@ -95,10 +95,21 @@ only_b = st.sidebar.checkbox("僅看突破", value=False)
 if st.sidebar.button("🚀 執行全方位掃描"):
     tickers, bench_code = get_stock_list(market_name)
     
-    # 大盤溫度計
+    # --- 大盤溫度計修正版 ---
     bench_df = yf.download(bench_code, period="1y", progress=False, auto_adjust=True)
-    b_close = bench_df['Close'].iloc[-1]
-    b_sma50 = bench_df['Close'].rolling(50).mean().iloc[-1]
+    
+    # 確保只取 Close 欄位並轉為單一 Series
+    if isinstance(bench_df.columns, pd.MultiIndex):
+        b_series = bench_df['Close'][bench_code]
+    else:
+        b_series = bench_df['Close']
+        
+    b_series = b_series.dropna()
+    
+    # 取最後一個數值 (使用 float 強制轉型確保是單一數字)
+    b_close = float(b_series.iloc[-1])
+    b_sma50 = float(b_series.rolling(50).mean().iloc[-1])
+    
     health = "🟢 牛市環境" if b_close > b_sma50 else "🔴 熊市/調整"
     
     c1, c2, c3 = st.columns(3)
