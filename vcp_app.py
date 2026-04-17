@@ -8,9 +8,9 @@ import numpy as np
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
-st.title("🏹 VCP Alpha 終極交易終端")
+st.title("🏹 VCP Alpha 全球終極交易終端")
 
-# --- 1. 自動獲取成份股 ---
+# --- 1. 自動獲取成份股 (整合中、港、美) ---
 @st.cache_data(ttl=86400)
 def get_stock_list(market):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -19,14 +19,16 @@ def get_stock_list(market):
             url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
             table = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))[0]
             return table['Symbol'].str.replace('.', '-', regex=False).tolist(), "^GSPC"
+        
         elif market == "美股 (Nasdaq 100)":
             url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
             tables = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))
             for t in tables:
                 if 'Ticker' in t.columns: return t['Ticker'].tolist(), "^IXIC"
                 if 'Symbol' in t.columns: return t['Symbol'].tolist(), "^IXIC"
+        
         elif market == "港股 (恒生指數)":
-            # 完整的恆生指數成份股清單 (共 82 隻)
+            # 完整的 82 隻恆指成份股
             hsi_list = [
                 "0001.HK", "0002.HK", "0003.HK", "0005.HK", "0006.HK", "0011.HK", "0012.HK", "0016.HK", 
                 "0017.HK", "0020.HK", "0027.HK", "0066.HK", "0101.HK", "0175.HK", "0241.HK", "0267.HK", 
@@ -40,23 +42,33 @@ def get_stock_list(market):
                 "9618.HK", "9633.HK", "9868.HK", "9888.HK", "9922.HK", "9961.HK", "9988.HK", "9992.HK", "9999.HK"
             ]
             return hsi_list, "^HSI"
+
+        elif market == "中國 A 股 (滬深 300 龍頭)":
+            # 精選 50 隻權重與流動性最強的 A 股
+            as_list = [
+                "600519.SS", "601318.SS", "600036.SS", "601012.SS", "600276.SS", "601166.SS", "600900.SS", "600030.SS",
+                "000858.SZ", "000333.SZ", "002415.SZ", "000651.SZ", "002475.SZ", "300750.SZ", "300059.SZ", "000725.SZ",
+                "601888.SS", "600809.SS", "601398.SS", "601288.SS", "601988.SS", "601628.SS", "601601.SS", "600019.SS",
+                "600048.SS", "601919.SS", "600104.SS", "601088.SS", "600309.SS", "600585.SS", "002594.SZ", "002142.SZ",
+                "000001.SZ", "002352.SZ", "002304.SZ", "002714.SZ", "300015.SZ", "300760.SZ", "603288.SS", "603501.SS",
+                "600703.SS", "600406.SS", "601857.SS", "601899.SS", "002460.SZ", "002466.SZ", "000768.SZ", "002027.SZ"
+            ]
+            return as_list, "000300.SS"
             
     except Exception as e:
         st.error(f"獲取名單失敗: {e}")
         return [], None
-    
     return [], None
-# --- 2. SCTR 排名計算 (加入防錯機制) ---
+
+# --- 2. SCTR 排名計算 ---
 def calculate_sctr_ranks(tickers):
     try:
         raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
-        # 處理多重索引
         data = raw_data['Close'] if 'Close' in raw_data else raw_data
         
         sctr_data = []
         for ticker in tickers:
             try:
-                # 確保 ticker 在 data 中且資料充足
                 series = data[ticker].dropna() if isinstance(data, pd.DataFrame) else data.dropna()
                 if len(series) < 200: continue
                 
@@ -73,9 +85,7 @@ def calculate_sctr_ranks(tickers):
         df_sctr = pd.DataFrame(sctr_data)
         df_sctr['rank'] = df_sctr['raw'].rank(pct=True) * 99.9
         return df_sctr.set_index('ticker')['rank'].to_dict()
-    except Exception as e:
-        st.warning(f"SCTR 計算遇到部分問題: {e}")
-        return {}
+    except: return {}
 
 # --- 3. 核心篩選 ---
 def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
@@ -83,15 +93,11 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
         df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
         if df.empty or len(df) < 200: return None
         
-        # 兼容 yfinance 下載單一標的與多重標的的格式
         close = df['Close'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Close']
         vol = df['Volume'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Volume']
         curr_p = float(close.iloc[-1])
         
-        # Minervini 6/6 條件
-        sma50 = ta.sma(close, 50).iloc[-1]
-        sma150 = ta.sma(close, 150).iloc[-1]
-        sma200 = ta.sma(close, 200).iloc[-1]
+        sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
         low52, high52 = float(close.min()), float(close.max())
         
         cond = [
@@ -104,12 +110,10 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
         ]
         
         if sum(cond) == 6:
-            # 波動收縮檢測 (Tightness)
             recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
             prev_range = (close.iloc[-25:-5].max() - close.iloc[-25:-5].min()) / close.iloc[-25:-5].min()
             is_tight = "✅ 緊湊" if recent_range < (prev_range * 0.7) else "❌ 鬆散"
             
-            # 突破與距離高點
             recent_max = float(close.iloc[-(b_days+1):-1].max())
             is_breakout = curr_p > recent_max
             if b_only and not is_breakout: return None
@@ -117,55 +121,46 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
             dist_high = round((1 - curr_p/high52) * 100, 2)
             vol_ratio = round(float(vol.iloc[-1]) / vol.rolling(20).mean().iloc[-1], 2)
             sctr_val = round(sctr_map.get(ticker, 0), 1)
-            
             status = f"🔥 {b_days}D突破" if is_breakout else "🚀 強勢向上"
             
             return [ticker, round(curr_p, 2), dist_high, sctr_val, is_tight, vol_ratio, status]
-        return None
-    except: 
-        return None
+    except: return None
+    return None
 
 # --- 4. 側邊欄與執行 ---
 st.sidebar.header("🎛️ 系統參數")
-market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)"])
+market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)", "中國 A 股 (滬深 300 龍頭)"])
 min_sctr_val = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 70.0)
 b_days = st.sidebar.selectbox("突破檢測天數", [10, 20, 50], index=1)
 only_b = st.sidebar.checkbox("僅看突破", value=False)
 
-if st.sidebar.button("🚀 執行全方位掃描"):
-    res_list = get_stock_list(market_name)
-    if res_list[0]:
-        tickers, bench_code = res_list
+if st.sidebar.button("🚀 執行全球同步掃描"):
+    res_tuple = get_stock_list(market_name)
+    if res_tuple[0]:
+        tickers, bench_code = res_tuple
         
-        # --- 大盤溫度計 ---
+        # 大盤溫度計
         try:
             bench_df = yf.download(bench_code, period="1y", progress=False, auto_adjust=True)
-            if not bench_df.empty:
-                b_series = bench_df['Close'][bench_code] if isinstance(bench_df.columns, pd.MultiIndex) else bench_df['Close']
-                b_series = b_series.dropna()
-                b_close = float(b_series.iloc[-1])
-                b_sma50 = float(b_series.rolling(50).mean().iloc[-1])
-                
-                health = "🟢 牛市環境" if b_close > b_sma50 else "🔴 熊市/調整"
-                
-                c1, c2, c3 = st.columns(3)
-                c1.metric("大盤狀態", health)
-                c2.metric("大盤收盤", f"{b_close:.2f}")
-                c3.metric("50MA 距離", f"{((b_close/b_sma50-1)*100):.2f}%")
-        except Exception as e:
-            st.error(f"溫度計數據加載失敗: {e}")
+            b_series = bench_df['Close'][bench_code] if isinstance(bench_df.columns, pd.MultiIndex) else bench_df['Close']
+            b_close = float(b_series.iloc[-1])
+            b_sma50 = float(b_series.rolling(50).mean().iloc[-1])
+            health = "🟢 牛市環境" if b_close > b_sma50 else "🔴 熊市/調整"
+            c1, c2, c3 = st.columns(3)
+            c1.metric("市場狀態", health)
+            c2.metric("大盤收盤", f"{b_close:.2f}")
+            c3.metric("50MA 距離", f"{((b_close/b_sma50-1)*100):.2f}%")
+        except: pass
 
         st.write("---")
-        st.info("📊 第一階段：SCTR 動能排名...")
+        st.info(f"📊 正在計算 {market_name} 的 SCTR 排名與 VCP 形態...")
         sctr_ranks = calculate_sctr_ranks(tickers)
         
-        st.info(f"🔍 第二階段：掃描 {len(tickers)} 隻股票形態...")
         results = []
         pb = st.progress(0)
         for i, t in enumerate(tickers):
             res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
-            if res and res[3] >= min_sctr_val: 
-                results.append(res)
+            if res and res[3] >= min_sctr_val: results.append(res)
             pb.progress((i + 1) / len(tickers))
 
         if results:
@@ -173,16 +168,18 @@ if st.sidebar.button("🚀 執行全方位掃描"):
             
             def make_link(t):
                 t_str = str(t)
-                code = t_str.replace('.HK', '').lstrip('0') if ".HK" in t_str else t_str.replace('.', '-')
-                px = "HKEX:" if ".HK" in t_str else ""
-                return f"https://www.tradingview.com/chart/?symbol={px}{code}"
+                if ".HK" in t_str:
+                    code = t_str.replace('.HK', '').lstrip('0')
+                    return f"https://www.tradingview.com/chart/?symbol=HKEX:{code}"
+                elif ".SS" in t_str or ".SZ" in t_str:
+                    code = t_str.split('.')[0]
+                    prefix = "SSE" if ".SS" in t_str else "SZSE"
+                    return f"https://www.tradingview.com/chart/?symbol={prefix}:{code}"
+                else:
+                    return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
             
             df['圖表'] = df['代碼'].apply(make_link)
-            df = df.sort_values("SCTR排名", ascending=False)
-            
-            st.dataframe(df, column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, use_container_width=True)
-            st.success(f"找到 {len(df)} 隻符合條件的標的。")
+            st.dataframe(df.sort_values("SCTR排名", ascending=False), column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, use_container_width=True)
+            st.success(f"完成！找到 {len(df)} 隻標的。")
         else:
-            st.warning("當前市場環境下無符合標的。建議嘗試調低 SCTR 排名要求。")
-    else:
-        st.error("無法獲取成份股名單，請稍後再試。")
+            st.warning("無符合標的。")
