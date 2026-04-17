@@ -126,6 +126,7 @@ if st.sidebar.button("🚀 開始全自動掃描"):
         progress_bar.progress((i + 1) / len(tickers))
     
     status_text.text("掃描完成！")
+    st.write(f"掃描結束，結果清單長度為: {len(results)}")
     
     if results:
         # 1. 建立 DataFrame
