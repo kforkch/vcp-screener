@@ -58,33 +58,48 @@ def get_stock_list(market):
 # --- 2. 核心篩選邏輯 (VCP Trend Template) ---
 def check_vcp_trend(ticker):
     try:
-        # yfinance 抓取數據 (修正符號：S&P 500 裡有些符號帶點，如 BRK.B 需轉成 BRK-B)
         formatted_ticker = ticker.replace('.', '-')
-        df = yf.download(formatted_ticker, period="1y", progress=False)
+        # 加上 auto_adjust=True 確保除權息後的價格精確
+        df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True)
         
-        if len(df) < 200: return None
+        if df.empty or len(df) < 200: return None
         
-        curr_price = float(df['Close'].iloc[-1])
-        sma50 = ta.sma(df['Close'], 50).iloc[-1]
-        sma150 = ta.sma(df['Close'], 150).iloc[-1]
-        sma200 = ta.sma(df['Close'], 200).iloc[-1]
-        low52 = df['Close'].min()
-        high52 = df['Close'].max()
+        # 提取收盤價
+        close_prices = df['Close']
+        curr_price = float(close_prices.iloc[-1])
+        
+        # 計算均線與指標
+        sma50 = ta.sma(close_prices, 50).iloc[-1]
+        sma150 = ta.sma(close_prices, 150).iloc[-1]
+        sma200 = ta.sma(close_prices, 200).iloc[-1]
+        low52 = float(close_prices.min())
+        high52 = float(close_prices.max())
 
-        # J Law / Minervini 篩選條件
-        c1 = curr_price > sma150 and curr_price > sma200
-        c2 = sma150 > sma200
-        c3 = sma50 > sma150 and sma50 > sma200
-        c4 = curr_price > sma50
-        c5 = curr_price >= (low52 * 1.25)
-        c6 = curr_price >= (high52 * 0.75)
+        # Minervini 的 6 個關鍵條件
+        conditions = [
+            curr_price > sma150 and curr_price > sma200,  # 1. 股價在長均線上
+            sma150 > sma200,                             # 2. 均線多頭排列
+            sma50 > sma150 and sma50 > sma200,           # 3. 中期均線在長期均線上
+            curr_price > sma50,                          # 4. 股價在短均線上 (短期強勢)
+            curr_price >= (low52 * 1.25),                # 5. 距離底部已反彈 25%
+            curr_price >= (high52 * 0.75)                # 6. 距離高點在 25% 以內 (高點整理)
+        ]
+        
+        score = sum(conditions) # 計算符合總數
+        dist_high = (1 - curr_price/high52) * 100
+        
+        # --- 分類邏輯 ---
+        if score == 6:
+            status = "🚀 強勢領頭羊"
+        elif score >= 4:
+            status = "👀 觀察名單"
+        else:
+            return None # 評分低於 4 分的不顯示，保持清單乾淨
 
-        if all([c1, c2, c3, c4, c5, c6]):
-            dist_high = (1 - curr_price/high52) * 100
-            return [ticker, round(curr_price, 2), f"{round(float(dist_high), 2)}%"]
-    except:
+        return [ticker, round(curr_price, 2), f"{round(dist_high, 2)}%", f"{score}/6", status]
+
+    except Exception:
         return None
-    return None
 
 # --- 3. 側邊欄控制與執行 ---
 st.sidebar.header("篩選參數")
@@ -99,11 +114,9 @@ if st.sidebar.button("🚀 開始全自動掃描"):
     st.subheader(f"📊 {market_choice} 篩選結果 (共計 {len(tickers)} 隻股票)")
     results = []
     
-    # 建立進度條與顯示文字
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    # 執行循環篩選
     for i, t in enumerate(tickers):
         status_text.text(f"正在分析第 {i+1}/{len(tickers)} 隻: {t}")
         res = check_vcp_trend(t)
@@ -114,8 +127,12 @@ if st.sidebar.button("🚀 開始全自動掃描"):
     status_text.text("掃描完成！")
     
     if results:
-        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離 52 週高點 %"])
-        # 生成 TradingView 連結
+        # 修改這裡的 columns 以對應 check_vcp_trend 的回傳值
+        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離 52 週高點 %", "評分", "狀態"])
+        
+        # 關鍵：按評分由高到低排序，同分則按距離高點由近到遠排序
+        df_final = df_final.sort_values(by=["評分", "距離 52 週高點 %"], ascending=[False, True])
+        
         df_final['查看圖表'] = df_final['代碼'].apply(lambda x: f"https://www.tradingview.com/chart/?symbol={x.replace('.HK', '').replace('.', '-')}")
         
         st.dataframe(
@@ -123,10 +140,9 @@ if st.sidebar.button("🚀 開始全自動掃描"):
             column_config={"查看圖表": st.column_config.Link_Column("點擊打開 TradingView")},
             use_container_width=True
         )
-        st.success(f"篩選完畢！在 {len(tickers)} 隻股票中找到了 {len(results)} 隻符合趨勢的強勢股。")
         st.balloons()
     else:
-        st.warning("目前沒有股票符合『第二階段』趨勢模板條件。")
+        st.warning("目前沒有股票符合趨勢條件（甚至未達觀察門檻 4/6）。")
 
 # --- 底部提示 ---
 st.divider()
