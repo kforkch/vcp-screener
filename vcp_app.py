@@ -165,9 +165,11 @@ if st.sidebar.button("🚀 開始全自動掃描"):
         # 3. 生成 TradingView 連結函數
         def get_tv_url(ticker):
             if ".HK" in ticker:
-                code = ticker.replace('.HK', '')
+                # 根據你的正確網址格式：HKG + 四位數字代碼 (不加冒號)
+                code = ticker.replace('.HK', '').zfill(4)
                 return f"https://www.tradingview.com/chart/?symbol=HKG{code}"
             else:
+                # 美股保持原樣：點號換橫線
                 return f"https://www.tradingview.com/chart/?symbol={ticker.replace('.', '-')}"
 
         df_final['查看圖表'] = df_final['代碼'].apply(get_tv_url)
