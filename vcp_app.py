@@ -9,7 +9,7 @@ import io
 st.set_page_config(page_title="VCP Pro Screener", layout="wide")
 st.title("🏹 VCP 專業量化篩選系統 (成交量 + RS 強度)")
 
-# --- 1. 自動獲取成份股 (新增大盤基準用於 RS 計算) ---
+# --- 1. 自動獲取成份股 ---
 @st.cache_data(ttl=86400)
 def get_stock_list(market):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -25,18 +25,19 @@ def get_stock_list(market):
                 if 'Ticker' in t.columns: return t['Ticker'].tolist(), "^IXIC"
                 if 'Symbol' in t.columns: return t['Symbol'].tolist(), "^IXIC"
         elif market == "港股 (恒生指數)":
+            # 港股建議手動維護或使用 API，此處維持原樣
             return ["0700.HK", "9988.HK", "3690.HK", "1211.HK", "1810.HK", "2318.HK", "0005.HK", "0388.HK", "9618.HK", "2269.HK"], "^HSI"
     except: return [], None
 
-# --- 2. 核心篩選邏輯 (加入 Volume 與 RS) ---
-def check_vcp_pro(ticker, benchmark_df, breakout_only=False, breakout_days=20):
+# --- 2. 核心篩選邏輯 ---
+def check_vcp_pro(ticker, benchmark_series, breakout_only=False, breakout_days=20):
     try:
         formatted_ticker = ticker if ".HK" in ticker else ticker.replace('.', '-')
         df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True)
         
         if df.empty or len(df) < 150: return None
         
-        # 處理資料
+        # 處理資料索引問題
         close_prices = df['Close'][formatted_ticker] if isinstance(df.columns, pd.MultiIndex) else df['Close']
         volumes = df['Volume'][formatted_ticker] if isinstance(df.columns, pd.MultiIndex) else df['Volume']
         curr_price = float(close_prices.iloc[-1])
@@ -65,15 +66,18 @@ def check_vcp_pro(ticker, benchmark_df, breakout_only=False, breakout_days=20):
         if score == 6:
             if breakout_only and not is_breakout: return None
             
-            # C. 加入「成交量倍數」 (Relative Volume)
+            # C. 成交量倍數
             avg_vol = volumes.rolling(20).mean().iloc[-1]
             vol_ratio = round(float(volumes.iloc[-1]) / avg_vol, 2)
 
-            # D. 加入「相對強度 (RS)」(對標大盤)
-            # 計算該股 3 個月回報 vs 大盤 3 個月回報
-            stock_ret = (curr_price / close_prices.iloc[-63]) - 1
-            bench_ret = (benchmark_df.iloc[-1] / benchmark_df.iloc[-63]) - 1
-            rs_score = round((stock_ret - bench_ret) * 100, 2) # 正數代表贏大盤
+            # D. 相對強度 (RS) 修正算法
+            try:
+                # 使用 iloc[-63] 確保取到大約 3 個月前的數據
+                stock_ret = (curr_price / close_prices.iloc[-63]) - 1
+                bench_ret = (benchmark_series.iloc[-1] / benchmark_series.iloc[-63]) - 1
+                rs_score = round((stock_ret - bench_ret) * 100, 2)
+            except:
+                rs_score = 0.0
 
             status = f"🔥 {breakout_days}D突破" if is_breakout else "🚀 趨勢向上"
             dist_high = round((1 - curr_price/high52) * 100, 2)
@@ -91,36 +95,38 @@ min_vol_ratio = st.sidebar.slider("最低成交量倍數", 0.5, 3.0, 1.0, 0.1)
 
 if st.sidebar.button("🚀 開始專業掃描"):
     tickers, bench_ticker = get_stock_list(market_choice)
-    benchmark_data = yf.download(bench_ticker, period="1y", progress=False)['Close']
     
+    # --- 關鍵修正：確保下載到正確的大盤 Series ---
+    bench_raw = yf.download(bench_ticker, period="1y", progress=False)
+    if isinstance(bench_raw.columns, pd.MultiIndex):
+        benchmark_series = bench_raw['Close'][bench_ticker]
+    else:
+        benchmark_series = bench_raw['Close']
+    benchmark_series = benchmark_series.dropna()
+
     results = []
     progress_bar = st.progress(0)
     status_text = st.empty()
 
     for i, t in enumerate(tickers):
         status_text.text(f"分析中: {t}")
-        res = check_vcp_pro(t, benchmark_data, breakout_only, breakout_days)
-        # 額外過濾成交量
+        res = check_vcp_pro(t, benchmark_series, breakout_only, breakout_days)
         if res and res[4] >= min_vol_ratio:
             results.append(res)
         progress_bar.progress((i + 1) / len(tickers))
 
+    status_text.text("掃描完成！")
+
     if results:
-        # 1. 建立初始 DataFrame
-        df_raw = pd.DataFrame(results, columns=["代碼", "現價", "距離高點%", "評分", "量比(20日)", "相對強度(RS)", "狀態"])
+        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點%", "評分", "量比(20日)", "相對強度(RS)", "狀態"])
         
-        # 2. 強制轉型並處理異常值（避免排序崩潰）
-        df_raw["相對強度(RS)"] = pd.to_numeric(df_raw["相對強度(RS)"], errors='coerce')
-        df_raw["量比(20日)"] = pd.to_numeric(df_raw["量比(20日)"], errors='coerce')
+        # 強制數值化
+        df_final["相對強度(RS)"] = pd.to_numeric(df_final["相對強度(RS)"], errors='coerce').fillna(0)
+        df_final["量比(20日)"] = pd.to_numeric(df_final["量比(20日)"], errors='coerce').fillna(1.0)
         
-        # 填充 NaN 以免被 dropna 刪光，這樣至少能看到股票代碼
-        df_raw["相對強度(RS)"] = df_raw["相對強度(RS)"].fillna(0)
-        df_raw["量比(20日)"] = df_raw["量比(20日)"].fillna(1.0)
+        # 排序
+        df_final = df_final.sort_values(by=["相對強度(RS)", "量比(20日)"], ascending=[False, False])
         
-        # 3. 排序
-        df_final = df_raw.sort_values(by=["相對強度(RS)", "量比(20日)"], ascending=[False, False])
-        
-        # 4. 生成 TradingView 連結
         def get_tv_url(ticker):
             t_str = str(ticker)
             code = t_str.replace('.HK', '').lstrip('0') if ".HK" in t_str else t_str.replace('.', '-')
@@ -129,16 +135,13 @@ if st.sidebar.button("🚀 開始專業掃描"):
         
         df_final['查看'] = df_final['代碼'].apply(get_tv_url)
 
-        # 5. 確保顯示的欄位與 DataFrame 內容完全一致
-        # 注意：檢查你的 column_config 裡的 Key 是否正確
         st.dataframe(
             df_final,
             column_config={
-                "查看": st.column_config.LinkColumn("圖表連結", display_text="Open Chart")
+                "查看": st.column_config.LinkColumn("圖表", display_text="Open Chart")
             },
             use_container_width=True
         )
-        
-        st.success(f"找到 {len(df_final)} 隻標的。")
+        st.success(f"篩選完畢！找到 {len(df_final)} 隻強勢標的。")
     else:
         st.warning("查無符合條件標的。")
