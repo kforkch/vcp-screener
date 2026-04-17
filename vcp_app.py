@@ -91,10 +91,10 @@ def check_vcp_trend(ticker):
         # --- 分類邏輯 ---
         if score == 6:
             status = "🚀 強勢領頭羊"
-        elif score >= 4:
+        elif score >= 3:
             status = "👀 觀察名單"
         else:
-            return None # 評分低於 4 分的不顯示，保持清單乾淨
+            return None # 評分低於 3 分的不顯示，保持清單乾淨
 
         return [ticker, round(curr_price, 2), f"{round(dist_high, 2)}%", f"{score}/6", status]
 
@@ -142,7 +142,7 @@ if st.sidebar.button("🚀 開始全自動掃描"):
         )
         st.balloons()
     else:
-        st.warning("目前沒有股票符合趨勢條件（甚至未達觀察門檻 4/6）。")
+        st.warning("目前沒有股票符合趨勢條件（甚至未達觀察門檻 3/6）。")
 
 # --- 底部提示 ---
 st.divider()
