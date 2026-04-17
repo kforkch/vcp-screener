@@ -160,41 +160,34 @@ if results:
         df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
         
 if results:
-        # 1. 建立 DataFrame 並進行數值排序
+        # --- 這裡開始都要縮進 (按一下 Tab 或 4 個空格) ---
         df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點數值", "評分", "狀態"])
+        
         df_final = df_final.sort_values(by=["評分", "距離高點數值"], ascending=[False, True])
         
-        # 2. 格式化顯示：數值轉百分比
         df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
         
-        # 3. 生成 TradingView 連結 (優化港股跳轉邏輯)
         def get_tv_url(ticker):
             if ".HK" in ticker:
-                # 港股加上 HKG: 前綴，確保直接定位到港交所標的
                 code = ticker.replace('.HK', '')
                 return f"https://www.tradingview.com/chart/?symbol=HKG:{code}"
             else:
-                # 美股點號轉橫線 (如 BRK.B -> BRK-B)
                 return f"https://www.tradingview.com/chart/?symbol={ticker.replace('.', '-')}"
 
         df_final['查看圖表'] = df_final['代碼'].apply(get_tv_url)
         
-        # 4. 定義最終顯示的欄位與順序
         display_cols = ["代碼", "現價", "距離 52 週高點 %", "評分", "狀態", "查看圖表"]
         
-        # 5. 渲染表格
         st.dataframe(
             df_final[display_cols], 
-            column_config={
-                "查看圖表": st.column_config.LinkColumn("點擊打開圖表", display_text="Open Chart")
-            },
+            column_config={"查看圖表": st.column_config.LinkColumn("點擊打開 TradingView")},
             use_container_width=True
         )
-        
-        st.success(f"篩選完畢！找到 {len(results)} 隻符合 6/6 趨勢模板的強勢股。")
+        st.success(f"篩選完畢！找到了 {len(results)} 隻符合 6/6 趨勢模板的強勢股。")
         st.balloons()
-        
-else:
+    else:
+        # --- 這個 else 要跟上面的 if 對齊 ---
+        st.warning("⚠️ 目前沒有股票完全符合條件。")
         st.warning("⚠️ 目前沒有股票完全符合『 6/6 滿分』趨勢模板條件。")
 
 # --- 底部提示 ---
