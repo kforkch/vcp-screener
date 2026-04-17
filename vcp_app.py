@@ -59,46 +59,47 @@ def get_stock_list(market):
 def check_vcp_trend(ticker):
     try:
         formatted_ticker = ticker.replace('.', '-')
-        # 加上 auto_adjust=True 確保除權息後的價格精確
+        # 抓取數據
         df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True)
         
-        if df.empty or len(df) < 200: return None
+        # 診斷點 1：檢查是否抓到數據
+        if df.empty or len(df) < 100: 
+            return None
         
-        # 提取收盤價
         close_prices = df['Close']
         curr_price = float(close_prices.iloc[-1])
         
-        # 計算均線與指標
+        # 計算指標
         sma50 = ta.sma(close_prices, 50).iloc[-1]
         sma150 = ta.sma(close_prices, 150).iloc[-1]
         sma200 = ta.sma(close_prices, 200).iloc[-1]
         low52 = float(close_prices.min())
         high52 = float(close_prices.max())
 
-        # Minervini 的 6 個關鍵條件
+        # 6 個標準條件
         conditions = [
-            curr_price > sma150 and curr_price > sma200,  # 1. 股價在長均線上
-            sma150 > sma200,                             # 2. 均線多頭排列
-            sma50 > sma150 and sma50 > sma200,           # 3. 中期均線在長期均線上
-            curr_price > sma50,                          # 4. 股價在短均線上 (短期強勢)
-            curr_price >= (low52 * 1.25),                # 5. 距離底部已反彈 25%
-            curr_price >= (high52 * 0.75)                # 6. 距離高點在 25% 以內 (高點整理)
+            curr_price > sma150 and curr_price > sma200,  # 1. 站上長均線
+            sma150 > sma200,                             # 2. 均線多頭
+            sma50 > sma150 and sma50 > sma200,           # 3. 中期強於長期
+            curr_price > sma50,                          # 4. 站上短均線
+            curr_price >= (low52 * 1.25),                # 5. 脫離底部
+            curr_price >= (high52 * 0.75)                # 6. 接近高點
         ]
         
-        score = sum(conditions) # 計算符合總數
+        score = sum(conditions) 
         dist_high = (1 - curr_price/high52) * 100
         
-        # --- 分類邏輯 ---
-        if score == 6:
-            status = "🚀 強勢領頭羊"
-        elif score >= 3:
-            status = "👀 觀察名單"
-        else:
-            return None # 評分低於 3 分的不顯示，保持清單乾淨
+        # --- 修改這裡：降低門檻並確保有輸出 ---
+        if score >= 3:
+            status = "🚀 強勢領頭羊" if score == 6 else "👀 觀察名單"
+            return [ticker, round(curr_price, 2), f"{round(dist_high, 2)}%", f"{score}/6", status]
+        
+        # 如果你想連 1-2 分的都看到（純測試用），可以把下面這行註解掉
+        return None 
 
-        return [ticker, round(curr_price, 2), f"{round(dist_high, 2)}%", f"{score}/6", status]
-
-    except Exception:
+    except Exception as e:
+        # 診斷點 2：如果計算出錯，顯示錯誤
+        # st.write(f"解析 {ticker} 出錯: {e}")
         return None
 
 # --- 3. 側邊欄控制與執行 ---
