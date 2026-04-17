@@ -2,26 +2,36 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
+import requests
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="J Law VCP Ultimate Screener", layout="wide")
 st.title("🏹 J Law 跨市場自動篩選系統 (美股/港股)")
 
 # --- 1. 自動獲取成份股函數 (加入 S&P 500) ---
-@st.cache_data(ttl=86400) # 每天自動更新名單
+@st.cache_data(ttl=86400)
 def get_stock_list(market):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     try:
         if market == "美股 (S&P 500)":
-            # 從 Wikipedia 抓取標普 500 名單
-            table = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
-            return table['Symbol'].tolist()
+            url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+            response = requests.get(url, headers=headers)
+            table = pd.read_html(response.text)[0]
+            # 修正標普 500 符號中的點（例如 BRK.B 轉為 BRK-B 以符合 yfinance 格式）
+            return table['Symbol'].str.replace('.', '-', regex=False).tolist()
+            
         elif market == "美股 (Nasdaq 100)":
-            # 從 Wikipedia 抓取納指 100 名單
-            table = pd.read_html('https://en.wikipedia.org/wiki/Nasdaq-100')[4]
+            url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
+            response = requests.get(url, headers=headers)
+            # 納指 100 所在的表格索引可能會隨 Wikipedia 更新變動，建議先抓 [4] 或 [3]
+            table = pd.read_html(response.text)[4] 
             return table['Symbol'].tolist()
+            
         elif market == "港股 (恒生指數)":
-            # 港股核心藍籌
             return ["0700.HK", "9988.HK", "3690.HK", "1211.HK", "1810.HK", "2318.HK", "0005.HK", "0388.HK", "9618.HK", "2269.HK"]
+            
     except Exception as e:
         st.error(f"獲取名單失敗: {e}")
         return []
