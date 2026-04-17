@@ -151,7 +151,7 @@ if st.sidebar.button("🚀 開始全自動掃描"):
         
         st.dataframe(
             df_final[display_cols], 
-            column_config={"查看圖表": st.column_config.Link_Column("點擊打開 TradingView")},
+            column_config={"查看圖表": st.column_config.LinkColumn("點擊打開 TradingView")},
             use_container_width=True
         )
         st.success(f"篩選完畢！共找到 {len(df_final)} 隻符合條件（3/6分以上）的股票。")
