@@ -8,9 +8,9 @@ import numpy as np
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
-st.title("🏹 VCP Alpha 全球終極終端 (產業群聚版)")
+st.title("🏹 VCP Alpha 全球終極交易終端")
 
-# --- 1. 自動獲取成份股 (全量名單) ---
+# --- 1. 自動獲取成份股 (整合中、港、美) ---
 @st.cache_data(ttl=86400)
 def get_stock_list(market):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -28,7 +28,6 @@ def get_stock_list(market):
                 if 'Symbol' in t.columns: return t['Symbol'].tolist(), "^IXIC"
         
         elif market == "港股 (恒生指數)":
-            # 完整的 82 隻恆指成份股，代碼補齊 4 位數
             hsi_list = [
                 "0001.HK", "0002.HK", "0003.HK", "0005.HK", "0006.HK", "0011.HK", "0012.HK", "0016.HK", 
                 "0017.HK", "0020.HK", "0027.HK", "0066.HK", "0101.HK", "0175.HK", "0241.HK", "0267.HK", 
@@ -43,51 +42,72 @@ def get_stock_list(market):
             ]
             return hsi_list, "^HSI"
 
-        elif market == "中國 A 股 (核心龍頭 100)":
+        elif market == "中國 A 股 (滬深 300 龍頭)":
             as_list = [
                 "600519.SS", "601318.SS", "600036.SS", "601012.SS", "600276.SS", "601166.SS", "600900.SS", "600030.SS",
                 "601888.SS", "600809.SS", "601398.SS", "601288.SS", "601988.SS", "601628.SS", "601601.SS", "600019.SS",
-                "600048.SS", "601919.SS", "000858.SZ", "300750.SZ", "002594.SZ", "000333.SZ" # 此處僅為演示，可照樣補齊到100隻
+                "600048.SS", "601919.SS", "600104.SS", "601088.SS", "600309.SS", "600585.SS", "603288.SS", "603501.SS",
+                "600703.SS", "600406.SS", "601857.SS", "601899.SS", "600111.SS", "600016.SS", "600690.SS", "600887.SS",
+                "601668.SS", "601138.SS", "601328.SS", "601006.SS", "601998.SS", "600000.SS", "600009.SS", "600150.SS",
+                "600196.SS", "600346.SS", "600547.SS", "600741.SS", "600760.SS", "600837.SS", "601766.SS", "601818.SS",
+                "601939.SS", "601985.SS", "000858.SZ", "000333.SZ", "002415.SZ", "000651.SZ", "002475.SZ", "300750.SZ",
+                "300059.SZ", "000725.SZ", "002594.SZ", "002142.SZ", "000001.SZ", "002352.SZ", "002304.SZ", "002714.SZ",
+                "300015.SZ", "300760.SZ", "002460.SZ", "002466.SZ", "000768.SZ", "002027.SZ", "000661.SZ", "000792.SZ",
+                "000895.SZ", "002001.SZ", "002007.SZ", "002241.SZ", "002271.SZ", "002371.SZ", "002410.SZ", "002459.SZ",
+                "002493.SZ", "002555.SZ", "002812.SZ", "300122.SZ", "300124.SZ", "300142.SZ", "300274.SZ", "300347.SZ",
+                "300408.SZ", "300433.SZ", "300498.SZ", "300529.SZ", "300896.SZ", "000002.SZ", "000063.SZ", "000100.SZ",
+                "000425.SZ", "000538.SZ", "000568.SZ", "001979.SZ"
             ]
             return as_list, "000300.SS"
-    except: return [], None
+            
+    except Exception as e:
+        st.error(f"獲取名單失敗: {e}")
+        return [], None
     return [], None
 
-# --- 2. SCTR 排名計算 (15個月數據確保 SMA200 準確) ---
+# --- 2. SCTR 排名計算 ---
 def calculate_sctr_ranks(tickers):
     try:
-        raw_data = yf.download(tickers, period="15mo", interval="1d", progress=False, auto_adjust=True)
+        raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
         data = raw_data['Close'] if 'Close' in raw_data else raw_data
+        
         sctr_data = []
         for ticker in tickers:
             try:
                 series = data[ticker].dropna() if isinstance(data, pd.DataFrame) else data.dropna()
-                if len(series) < 200: continue # 嚴格門檻
+                if len(series) < 200: continue
+                
                 sma200, sma50 = series.rolling(200).mean().iloc[-1], series.rolling(50).mean().iloc[-1]
                 dist_200, dist_50 = (series.iloc[-1]/sma200-1)*100, (series.iloc[-1]/sma50-1)*100
                 roc125, roc20 = (series.iloc[-1]/series.iloc[-125]-1)*100, (series.iloc[-1]/series.iloc[-20]-1)*100
                 rsi = ta.rsi(series, length=14).iloc[-1]
+                
                 raw = (dist_200*0.3 + roc125*0.3) + (dist_50*0.15 + roc20*0.15) + (rsi*0.1)
                 sctr_data.append({'ticker': ticker, 'raw': raw})
             except: continue
+            
         if not sctr_data: return {}
         df_sctr = pd.DataFrame(sctr_data)
         df_sctr['rank'] = df_sctr['raw'].rank(pct=True) * 99.9
         return df_sctr.set_index('ticker')['rank'].to_dict()
     except: return {}
 
-# --- 3. 核心 VCP 分析 (整合產業獲取) ---
-def analyze_vcp_full(ticker, sctr_map, b_only, b_days):
+# --- 3. 核心篩選 ---
+def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
     try:
-        t_obj = yf.Ticker(ticker)
-        df = t_obj.history(period="15mo", auto_adjust=True)
+        # 使用 yf.Ticker 物件以便獲取 info
+        ticker_obj = yf.Ticker(ticker)
+        df = ticker_obj.history(period="1y", auto_adjust=True)
+        
         if df.empty or len(df) < 200: return None
         
         close = df['Close']
         vol = df['Volume']
         curr_p = float(close.iloc[-1])
         
-        sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
+        sma50 = ta.sma(close, 50).iloc[-1]
+        sma150 = ta.sma(close, 150).iloc[-1]
+        sma200 = ta.sma(close, 200).iloc[-1]
         low52, high52 = float(close.min()), float(close.max())
         
         cond = [
@@ -99,12 +119,13 @@ def analyze_vcp_full(ticker, sctr_map, b_only, b_days):
             curr_p >= (high52 * 0.75)
         ]
         
-        if all(cond):
-            # 獲取產業 (這就是你剛才代碼中能看到行業的關鍵)
+        if sum(cond) == 6:
+            # --- 獲取行業資訊 (新增) ---
             try:
-                sector = t_obj.info.get('sector', '其他/多元化')
+                # yfinance 的 info 在中港股很不穩定，加入備援機制
+                sector = ticker_obj.info.get('sector', '未知板塊')
             except:
-                sector = "金融/權重" if ".HK" in ticker or ".SS" in ticker else "技術/其他"
+                sector = "未知板塊"
 
             recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
             prev_range = (close.iloc[-25:-5].max() - close.iloc[-25:-5].min()) / close.iloc[-25:-5].min()
@@ -117,51 +138,85 @@ def analyze_vcp_full(ticker, sctr_map, b_only, b_days):
             dist_high = round((1 - curr_p/high52) * 100, 2)
             vol_ratio = round(float(vol.iloc[-1]) / vol.rolling(20).mean().iloc[-1], 2)
             sctr_val = round(sctr_map.get(ticker, 0), 1)
+            status = f"🔥 {b_days}D突破" if is_breakout else "🚀 強勢向上"
             
-            return [ticker, round(curr_p, 2), dist_high, sctr_val, is_tight, vol_ratio, sector]
+            # 返回值加入 sector
+            return [ticker, round(curr_p, 2), dist_high, sctr_val, is_tight, vol_ratio, status, sector]
     except: return None
+    return None
 
-# --- 4. UI 介面 ---
-market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)", "中國 A 股 (核心龍頭 100)"])
-min_sctr = st.sidebar.slider("最低 SCTR", 0.0, 99.9, 70.0)
-b_days = st.sidebar.selectbox("突破天數", [10, 20, 50], index=1)
-only_b = st.sidebar.checkbox("僅看突破")
+# --- 4. 側邊欄與執行 ---
+st.sidebar.header("🎛️ 系統參數")
+market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)", "中國 A 股 (滬深 300 龍頭)"])
+min_sctr_val = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 70.0)
+b_days = st.sidebar.selectbox("突破檢測天數", [10, 20, 50], index=1)
+only_b = st.sidebar.checkbox("僅看突破", value=False)
 
-if st.sidebar.button("🚀 開始全量掃描"):
-    tickers, bench = get_stock_list(market_name)
-    if tickers:
-        # 大盤溫度計
+if st.sidebar.button("🚀 執行全球同步掃描"):
+    res_tuple = get_stock_list(market_name)
+    if res_tuple[0]:
+        tickers, bench_code = res_tuple
+        
+        # --- 大盤溫度計 ---
         try:
-            b_df = yf.download(bench, period="1y", progress=False, auto_adjust=True)
-            b_c = b_df['Close'].iloc[-1]
-            b_ma = b_df['Close'].rolling(50).mean().iloc[-1]
-            st.columns(3)[0].metric("大盤狀態", "🟢 牛市" if b_c > b_ma else "🔴 調整")
+            bench_df = yf.download(bench_code, period="1y", progress=False, auto_adjust=True)
+            b_series = bench_df['Close'][bench_code] if isinstance(bench_df.columns, pd.MultiIndex) else bench_df['Close']
+            b_close = float(b_series.iloc[-1])
+            b_sma50 = float(b_series.rolling(50).mean().iloc[-1])
+            health = "🟢 牛市環境" if b_close > b_sma50 else "🔴 熊市/調整"
+            c1, c2, c3 = st.columns(3)
+            c1.metric("市場狀態", health)
+            c2.metric("大盤收盤", f"{b_close:.2f}")
+            c3.metric("50MA 距離", f"{((b_close/b_sma50-1)*100):.2f}%")
         except: pass
 
-        st.info(f"正在分析 {market_name} 數據...")
+        st.write("---")
+        st.info(f"📊 正在計算 {market_name} 的 SCTR 排名與 VCP 形態...")
         sctr_ranks = calculate_sctr_ranks(tickers)
+        
         results = []
         pb = st.progress(0)
-        
         for i, t in enumerate(tickers):
-            res = analyze_vcp_full(t, sctr_ranks, only_b, b_days)
-            if res and res[3] >= min_sctr: results.append(res)
+            res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
+            if res and res[3] >= min_sctr_val: results.append(res)
             pb.progress((i + 1) / len(tickers))
-        
-        if results:
-            df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR", "收縮", "量比", "產業"])
-            
-            # --- 產業群聚統計 (圖表) ---
-            st.subheader("🔥 產業群聚分佈")
-            st.bar_chart(df['產業'].value_counts())
-            
-            # --- TradingView 連結 ---
-            def make_link(t):
-                if ".HK" in t: return f"https://www.tradingview.com/chart/?symbol=HKEX:{t.replace('.HK','').lstrip('0')}"
-                if ".SS" in t or ".SZ" in t: return f"https://www.tradingview.com/chart/?symbol={'SSE' if '.SS' in t else 'SZSE'}:{t.split('.')[0]}"
-                return f"https://www.tradingview.com/chart/?symbol={t.replace('.','-')}"
-            df['圖表'] = df['代碼'].apply(make_link)
 
-            st.dataframe(df.sort_values("SCTR", ascending=False), column_config={"圖表": st.column_config.LinkColumn("查看")}, hide_index=True)
+        if results:
+            # DataFrame 列名增加 "行業"
+            df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態", "行業"])
+            
+            # --- 產業群聚視覺化 (新增) ---
+            st.subheader("🔥 產業群聚分析 (Industry Group Power)")
+            col_chart, col_stat = st.columns([2, 1])
+            group_counts = df['行業'].value_counts()
+            col_chart.bar_chart(group_counts)
+            col_stat.dataframe(group_counts, use_container_width=True)
+            
+            # --- 智能圖表連結 ---
+            def make_link(t):
+                t_str = str(t)
+                if ".HK" in t_str:
+                    code = t_str.replace('.HK', '').lstrip('0')
+                    return f"https://www.tradingview.com/chart/?symbol=HKEX:{code}"
+                elif ".SS" in t_str or ".SZ" in t_str:
+                    code = t_str.split('.')[0]
+                    prefix = "SSE" if ".SS" in t_str else "SZSE"
+                    return f"https://www.tradingview.com/chart/?symbol={prefix}:{code}"
+                else:
+                    return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
+            
+            df['圖表'] = df['代碼'].apply(make_link)
+            
+            # 排序顯示
+            df_sorted = df.sort_values("SCTR排名", ascending=False)
+            st.write("---")
+            st.subheader("🎯 掃描結果細節")
+            st.dataframe(
+                df_sorted, 
+                column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, 
+                use_container_width=True,
+                hide_index=True
+            )
+            st.success(f"掃描完成！在 {len(tickers)} 隻股票中找到 {len(df)} 隻符合條件。")
         else:
-            st.warning("無符合標的。")
+            st.warning("當前篩選條件下無符合標的。")
