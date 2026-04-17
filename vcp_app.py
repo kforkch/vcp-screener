@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import requests
+import io
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="J Law VCP Ultimate Screener", layout="wide")
@@ -18,15 +19,15 @@ def get_stock_list(market):
         if market == "美股 (S&P 500)":
             url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
             response = requests.get(url, headers=headers)
-            table = pd.read_html(response.text)[0]
-            # 修正標普 500 符號中的點（例如 BRK.B 轉為 BRK-B 以符合 yfinance 格式）
+            # 使用 io.StringIO 包裹 response.text，明確告知這是字串流
+            table = pd.read_html(io.StringIO(response.text))[0]
             return table['Symbol'].str.replace('.', '-', regex=False).tolist()
             
         elif market == "美股 (Nasdaq 100)":
             url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
             response = requests.get(url, headers=headers)
-            # 納指 100 所在的表格索引可能會隨 Wikipedia 更新變動，建議先抓 [4] 或 [3]
-            table = pd.read_html(response.text)[4] 
+            # 同樣使用 io.StringIO
+            table = pd.read_html(io.StringIO(response.text))[4] 
             return table['Symbol'].tolist()
             
         elif market == "港股 (恒生指數)":
