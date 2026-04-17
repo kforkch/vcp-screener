@@ -62,7 +62,7 @@ def check_vcp_trend(ticker):
         if ".HK" in ticker:
             formatted_ticker = ticker  # 港股保持 0700.HK
         else:
-        formatted_ticker = ticker.replace('.', '-')
+            formatted_ticker = ticker.replace('.', '-')
         df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True, threads=False)
         
         if df.empty or len(df) < 100:
