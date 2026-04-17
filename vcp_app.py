@@ -159,6 +159,14 @@ if results:
         # 2. 格式化顯示：數值轉百分比
         df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
         
+        if results:
+        # 1. 建立 DataFrame 並進行數值排序
+        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點數值", "評分", "狀態"])
+        df_final = df_final.sort_values(by=["評分", "距離高點數值"], ascending=[False, True])
+        
+        # 2. 格式化顯示：數值轉百分比
+        df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
+        
         # 3. 生成 TradingView 連結 (優化港股跳轉邏輯)
         def get_tv_url(ticker):
             if ".HK" in ticker:
@@ -186,7 +194,7 @@ if results:
         st.success(f"篩選完畢！找到 {len(results)} 隻符合 6/6 趨勢模板的強勢股。")
         st.balloons()
         
-            else:
+    else:
         st.warning("⚠️ 目前沒有股票完全符合『 6/6 滿分』趨勢模板條件。")
 
 # --- 底部提示 ---
