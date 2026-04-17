@@ -59,27 +59,37 @@ def get_stock_list(market):
 def check_vcp_trend(ticker):
     try:
         formatted_ticker = ticker.replace('.', '-')
-        # 核心修正：加入 threads=False 避免請求衝突，並強制 auto_adjust
         df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True, threads=False)
         
         if df.empty or len(df) < 100:
-            # 如果是空值，我們在畫面上印出來看看 (測試完可以刪除)
-            # st.write(f"⚠️ {ticker} 下載失敗或數據不足") 
             return None
         
-        # 修正：確保提取的是一維數據，處理 Multi-index 問題
+        # 處理資料格式
         if isinstance(df.columns, pd.MultiIndex):
             close_prices = df['Close'][formatted_ticker]
         else:
             close_prices = df['Close']
 
-        # 轉為浮點數序列，避免 pandas_ta 計算失敗
         close_prices = close_prices.astype(float)
-        
         curr_price = float(close_prices.iloc[-1])
-        sma50 = ta.sma(close_prices, 50).iloc[-1]
-        sma150 = ta.sma(close_prices, 150).iloc[-1]
-        sma200 = ta.sma(close_prices, 200).iloc[-1]
+
+        # --- 安全計算指標 (關鍵修正) ---
+        sma50_series = ta.sma(close_prices, 50)
+        sma150_series = ta.sma(close_prices, 150)
+        sma200_series = ta.sma(close_prices, 200)
+
+        # 檢查指標是否存在，且最後一筆不是空值
+        if (sma50_series is None or sma150_series is None or sma200_series is None):
+            return None
+            
+        sma50 = sma50_series.iloc[-1]
+        sma150 = sma150_series.iloc[-1]
+        sma200 = sma200_series.iloc[-1]
+
+        # 如果任何一個均線是 NaN，代表數據不足以支持計算，跳過
+        if pd.isna(sma50) or pd.isna(sma150) or pd.isna(sma200):
+            return None
+
         low52 = float(close_prices.min())
         high52 = float(close_prices.max())
 
@@ -96,13 +106,14 @@ def check_vcp_trend(ticker):
         score = sum(conditions)
         dist_high = round((1 - curr_price/high52) * 100, 2)
         
-        # 只要 3 分以上就回傳
+        # 門檻：3 分以上
         if score >= 3:
             status = "🚀 強勢領頭羊" if score == 6 else "👀 觀察名單"
+            # 注意：回傳 5 個值，對應你的 DataFrame columns
             return [ticker, round(curr_price, 2), dist_high, f"{score}/6", status]
 
     except Exception as e:
-        # 如果計算過程出錯，把錯誤印出來
+        # 這裡的錯誤訊息會幫你抓出具體哪隻股票、哪個步驟出問題
         st.error(f"解析 {ticker} 時發生錯誤: {e}")
         return None
     return None
