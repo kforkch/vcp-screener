@@ -159,7 +159,7 @@ if results:
         # 2. 格式化顯示：數值轉百分比
         df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
         
-        if results:
+    if results:
         # 1. 建立 DataFrame 並進行數值排序
         df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點數值", "評分", "狀態"])
         df_final = df_final.sort_values(by=["評分", "距離高點數值"], ascending=[False, True])
