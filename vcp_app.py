@@ -59,48 +59,53 @@ def get_stock_list(market):
 def check_vcp_trend(ticker):
     try:
         formatted_ticker = ticker.replace('.', '-')
-        # 抓取數據
-        df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True)
+        # 核心修正：加入 threads=False 避免請求衝突，並強制 auto_adjust
+        df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True, threads=False)
         
-        # 診斷點 1：檢查是否抓到數據
-        if df.empty or len(df) < 100: 
+        if df.empty or len(df) < 100:
+            # 如果是空值，我們在畫面上印出來看看 (測試完可以刪除)
+            # st.write(f"⚠️ {ticker} 下載失敗或數據不足") 
             return None
         
-        close_prices = df['Close']
-        curr_price = float(close_prices.iloc[-1])
+        # 修正：確保提取的是一維數據，處理 Multi-index 問題
+        if isinstance(df.columns, pd.MultiIndex):
+            close_prices = df['Close'][formatted_ticker]
+        else:
+            close_prices = df['Close']
+
+        # 轉為浮點數序列，避免 pandas_ta 計算失敗
+        close_prices = close_prices.astype(float)
         
-        # 計算指標
+        curr_price = float(close_prices.iloc[-1])
         sma50 = ta.sma(close_prices, 50).iloc[-1]
         sma150 = ta.sma(close_prices, 150).iloc[-1]
         sma200 = ta.sma(close_prices, 200).iloc[-1]
         low52 = float(close_prices.min())
         high52 = float(close_prices.max())
 
-        # 6 個標準條件
+        # 6 個條件
         conditions = [
-            curr_price > sma150 and curr_price > sma200,  # 1. 站上長均線
-            sma150 > sma200,                             # 2. 均線多頭
-            sma50 > sma150 and sma50 > sma200,           # 3. 中期強於長期
-            curr_price > sma50,                          # 4. 站上短均線
-            curr_price >= (low52 * 1.25),                # 5. 脫離底部
-            curr_price >= (high52 * 0.75)                # 6. 接近高點
+            curr_price > sma150 and curr_price > sma200,
+            sma150 > sma200,
+            sma50 > sma150 and sma50 > sma200,
+            curr_price > sma50,
+            curr_price >= (low52 * 1.25),
+            curr_price >= (high52 * 0.75)
         ]
         
-        score = sum(conditions) 
-        dist_high = (1 - curr_price/high52) * 100
+        score = sum(conditions)
+        dist_high = round((1 - curr_price/high52) * 100, 2)
         
-        # --- 修改這裡：降低門檻並確保有輸出 ---
+        # 只要 3 分以上就回傳
         if score >= 3:
             status = "🚀 強勢領頭羊" if score == 6 else "👀 觀察名單"
-            return [ticker, round(curr_price, 2), f"{round(dist_high, 2)}%", f"{score}/6", status]
-        
-        # 如果你想連 1-2 分的都看到（純測試用），可以把下面這行註解掉
-        return None 
+            return [ticker, round(curr_price, 2), dist_high, f"{score}/6", status]
 
     except Exception as e:
-        # 診斷點 2：如果計算出錯，顯示錯誤
-        # st.write(f"解析 {ticker} 出錯: {e}")
+        # 如果計算過程出錯，把錯誤印出來
+        st.error(f"解析 {ticker} 時發生錯誤: {e}")
         return None
+    return None
 
 # --- 3. 側邊欄控制與執行 ---
 st.sidebar.header("篩選參數")
