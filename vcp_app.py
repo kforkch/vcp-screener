@@ -134,6 +134,7 @@ if market_choice == "手動輸入":
 else:
     tickers = get_stock_list(market_choice)
 
+# --- 3. 執行掃描按鈕 ---
 if st.sidebar.button("🚀 開始全自動掃描"):
     st.subheader(f"📊 {market_choice} 篩選結果 (共計 {len(tickers)} 隻股票)")
     results = []
@@ -141,6 +142,7 @@ if st.sidebar.button("🚀 開始全自動掃描"):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
+    # 循環篩選
     for i, t in enumerate(tickers):
         status_text.text(f"正在分析第 {i+1}/{len(tickers)} 隻: {t}")
         res = check_vcp_trend(t)
@@ -149,9 +151,10 @@ if st.sidebar.button("🚀 開始全自動掃描"):
         progress_bar.progress((i + 1) / len(tickers))
     
     status_text.text("掃描完成！")
-    st.write(f"掃描結束，結果清單長度為: {len(results)}")
+    st.write(f"🔍 診斷訊息：掃描結束，結果清單長度為: {len(results)}")
     
-if results:
+    # --- 重要：if results 必須縮進在按鈕的 if 裡面 ---
+    if results:
         # 1. 建立 DataFrame 並進行數值排序
         df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點數值", "評分", "狀態"])
         df_final = df_final.sort_values(by=["評分", "距離高點數值"], ascending=[False, True])
@@ -159,14 +162,7 @@ if results:
         # 2. 格式化顯示：數值轉百分比
         df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
         
-if results:
-        # --- 這裡開始都要縮進 (按一下 Tab 或 4 個空格) ---
-        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點數值", "評分", "狀態"])
-        
-        df_final = df_final.sort_values(by=["評分", "距離高點數值"], ascending=[False, True])
-        
-        df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
-        
+        # 3. 生成 TradingView 連結函數
         def get_tv_url(ticker):
             if ".HK" in ticker:
                 code = ticker.replace('.HK', '')
@@ -176,16 +172,23 @@ if results:
 
         df_final['查看圖表'] = df_final['代碼'].apply(get_tv_url)
         
+        # 4. 定義顯示欄位
         display_cols = ["代碼", "現價", "距離 52 週高點 %", "評分", "狀態", "查看圖表"]
         
+        # 5. 顯示表格
         st.dataframe(
             df_final[display_cols], 
-            column_config={"查看圖表": st.column_config.LinkColumn("點擊打開 TradingView")},
+            column_config={
+                "查看圖表": st.column_config.LinkColumn("點擊打開 TradingView", display_text="Open Chart")
+            },
             use_container_width=True
         )
-        st.success(f"篩選完畢！找到了 {len(results)} 隻符合 6/6 趨勢模板的強勢股。")
+        st.success(f"篩選完畢！找到了 {len(results)} 隻完全符合 6/6 趨勢模板的強勢股。")
         st.balloons()
+        
     else:
+        # 這個 else 現在正確對齊 if results
+        st.warning("⚠️ 目前沒有股票完全符合『 6/6 滿分』趨勢模板條件。這可能代表市場環境正在轉弱。")
         # --- 這個 else 要跟上面的 if 對齊 ---
         st.warning("⚠️ 目前沒有股票完全符合條件。")
         st.warning("⚠️ 目前沒有股票完全符合『 6/6 滿分』趨勢模板條件。")
