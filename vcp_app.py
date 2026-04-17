@@ -157,8 +157,11 @@ if st.sidebar.button("🚀 開始全自動掃描"):
         # 3. 將數值轉為顯示用的百分比格式
         df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
         
-        # 4. 生成 TradingView 連結
-        df_final['查看圖表'] = df_final['代碼'].apply(lambda x: f"https://www.tradingview.com/chart/?symbol={x.replace('.HK', '').replace('.', '-')}")
+       # 生成 TradingView 連結 (確保港股代號如 0700.HK 能正確跳轉)
+        df_final['查看圖表'] = df_final['代碼'].apply(
+            lambda x: f"https://www.tradingview.com/chart/?symbol={x.replace('.HK', '')}" if ".HK" in x 
+            else f"https://www.tradingview.com/chart/?symbol={x.replace('.', '-')}"
+        )
         
         # 5. 只選取要顯示的欄位
         display_cols = ["代碼", "現價", "距離 52 週高點 %", "評分", "狀態", "查看圖表"]
