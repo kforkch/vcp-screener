@@ -151,34 +151,43 @@ if st.sidebar.button("🚀 開始全自動掃描"):
     status_text.text("掃描完成！")
     st.write(f"掃描結束，結果清單長度為: {len(results)}")
     
-    if results:
-        # 1. 建立 DataFrame
+if results:
+        # 1. 建立 DataFrame 並進行數值排序
         df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點數值", "評分", "狀態"])
-        
-        # 2. 先進行數值排序（確保排序正確）
         df_final = df_final.sort_values(by=["評分", "距離高點數值"], ascending=[False, True])
         
-        # 3. 將數值轉為顯示用的百分比格式
+        # 2. 格式化顯示：數值轉百分比
         df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
         
-       # 生成 TradingView 連結 (確保港股代號如 0700.HK 能正確跳轉)
-        df_final['查看圖表'] = df_final['代碼'].apply(
-            lambda x: f"https://www.tradingview.com/chart/?symbol={x.replace('.HK', '')}" if ".HK" in x 
-            else f"https://www.tradingview.com/chart/?symbol={x.replace('.', '-')}"
-        )
+        # 3. 生成 TradingView 連結 (優化港股跳轉邏輯)
+        def get_tv_url(ticker):
+            if ".HK" in ticker:
+                # 港股加上 HKG: 前綴，確保直接定位到港交所標的
+                code = ticker.replace('.HK', '')
+                return f"https://www.tradingview.com/chart/?symbol=HKG:{code}"
+            else:
+                # 美股點號轉橫線 (如 BRK.B -> BRK-B)
+                return f"https://www.tradingview.com/chart/?symbol={ticker.replace('.', '-')}"
+
+        df_final['查看圖表'] = df_final['代碼'].apply(get_tv_url)
         
-        # 5. 只選取要顯示的欄位
+        # 4. 定義最終顯示的欄位與順序
         display_cols = ["代碼", "現價", "距離 52 週高點 %", "評分", "狀態", "查看圖表"]
         
+        # 5. 渲染表格
         st.dataframe(
             df_final[display_cols], 
-            column_config={"查看圖表": st.column_config.LinkColumn("點擊打開 TradingView")},
+            column_config={
+                "查看圖表": st.column_config.LinkColumn("點擊打開圖表", display_text="Open Chart")
+            },
             use_container_width=True
         )
-        st.success(f"篩選完畢！在 {len(tickers)} 隻股票中找到了 {len(results)} 隻完全符合 6/6 趨勢模板的強勢股。")
+        
+        st.success(f"篩選完畢！找到 {len(results)} 隻符合 6/6 趨勢模板的強勢股。")
         st.balloons()
+        
     else:
-        st.warning("⚠️ 目前沒有股票完全符合『 6/6 滿分』趨勢模板條件。這可能代表市場環境正在轉弱或進行整理。")
+        st.warning("⚠️ 目前沒有股票完全符合『 6/6 滿分』趨勢模板條件。")
 
 # --- 底部提示 ---
 st.divider()
