@@ -4,10 +4,12 @@ import pandas as pd
 import pandas_ta as ta
 import requests
 import io
+import numpy as np
 
 # --- 頁面配置 ---
-st.set_page_config(page_title="VCP Pro Screener", layout="wide")
-st.title("🏹 VCP 專業量化篩選系統 (成交量 + RS 強度)")
+st.set_page_config(page_title="VCP SCTR Screener", layout="wide")
+st.title("🏹 VCP + SCTR 專業量化篩選系統")
+st.markdown("結合 **Minervini 趨勢模板** 與 **StockCharts SCTR 綜合評分排名**")
 
 # --- 1. 自動獲取成份股 ---
 @st.cache_data(ttl=86400)
@@ -17,36 +19,66 @@ def get_stock_list(market):
         if market == "美股 (S&P 500)":
             url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
             table = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))[0]
-            return table['Symbol'].str.replace('.', '-', regex=False).tolist(), "^GSPC"
+            return table['Symbol'].str.replace('.', '-', regex=False).tolist()
         elif market == "美股 (Nasdaq 100)":
             url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
             tables = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))
             for t in tables:
-                if 'Ticker' in t.columns: return t['Ticker'].tolist(), "^IXIC"
-                if 'Symbol' in t.columns: return t['Symbol'].tolist(), "^IXIC"
+                if 'Ticker' in t.columns: return t['Ticker'].tolist()
+                if 'Symbol' in t.columns: return t['Symbol'].tolist()
         elif market == "港股 (恒生指數)":
-            # 港股建議手動維護或使用 API，此處維持原樣
-            return ["0700.HK", "9988.HK", "3690.HK", "1211.HK", "1810.HK", "2318.HK", "0005.HK", "0388.HK", "9618.HK", "2269.HK"], "^HSI"
-    except: return [], None
+            return ["0700.HK", "9988.HK", "3690.HK", "1211.HK", "1810.HK", "2318.HK", "0005.HK", "0388.HK", "9618.HK", "2269.HK"]
+    except: return []
 
-# --- 2. 核心篩選邏輯 ---
-def check_vcp_pro(ticker, benchmark_series, breakout_only=False, breakout_days=20):
+# --- 2. 核心計算：模擬 SCTR 評分邏輯 ---
+def calculate_sctr_ranks(tickers):
+    """計算全市場 SCTR 排名 (0-99.9)"""
+    sctr_data = []
+    # 批量下載數據
+    data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)['Close']
+    
+    for ticker in tickers:
+        try:
+            series = data[ticker].dropna()
+            if len(series) < 200: continue
+            
+            # --- 長線指標 (60%) ---
+            sma200 = series.rolling(200).mean().iloc[-1]
+            dist_sma200 = (series.iloc[-1] / sma200 - 1) * 100
+            roc125 = (series.iloc[-1] / series.iloc[-125] - 1) * 100
+            
+            # --- 中線指標 (30%) ---
+            sma50 = series.rolling(50).mean().iloc[-1]
+            dist_sma50 = (series.iloc[-1] / sma50 - 1) * 100
+            roc20 = (series.iloc[-1] / series.iloc[-20] - 1) * 100
+            
+            # --- 短線指標 (10%) ---
+            rsi = ta.rsi(series, length=14).iloc[-1]
+            
+            # SCTR 原始加權總分
+            raw_score = (dist_sma200 * 0.3) + (roc125 * 0.3) + (dist_sma50 * 0.15) + (roc20 * 0.15) + (rsi * 0.1)
+            sctr_data.append({'ticker': ticker, 'raw': raw_score})
+        except: continue
+    
+    if not sctr_data: return {}
+    df_sctr = pd.DataFrame(sctr_data)
+    # 轉化為 0-99.9 排名
+    df_sctr['rank'] = df_sctr['raw'].rank(pct=True) * 99.9
+    return df_sctr.set_index('ticker')['rank'].to_dict()
+
+# --- 3. 形態篩選函數 ---
+def check_vcp_v2(ticker, sctr_map, breakout_only, breakout_days):
     try:
-        formatted_ticker = ticker if ".HK" in ticker else ticker.replace('.', '-')
-        df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True)
+        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+        if df.empty or len(df) < 200: return None
         
-        if df.empty or len(df) < 150: return None
+        close = df['Close'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Close']
+        vol = df['Volume'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Volume']
+        curr_price = float(close.iloc[-1])
         
-        # 處理資料索引問題
-        close_prices = df['Close'][formatted_ticker] if isinstance(df.columns, pd.MultiIndex) else df['Close']
-        volumes = df['Volume'][formatted_ticker] if isinstance(df.columns, pd.MultiIndex) else df['Volume']
-        curr_price = float(close_prices.iloc[-1])
-
-        # A. 趨勢條件 (Minervini 6/6)
-        sma50 = ta.sma(close_prices, 50).iloc[-1]
-        sma150 = ta.sma(close_prices, 150).iloc[-1]
-        sma200 = ta.sma(close_prices, 200).iloc[-1]
-        low52, high52 = float(close_prices.min()), float(close_prices.max())
+        # Minervini 6/6
+        sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
+        low52, high52 = float(close.min()), float(close.max())
         
         conditions = [
             curr_price > sma150 and curr_price > sma200,
@@ -56,92 +88,48 @@ def check_vcp_pro(ticker, benchmark_series, breakout_only=False, breakout_days=2
             curr_price >= (low52 * 1.25),
             curr_price >= (high52 * 0.75)
         ]
-        score = sum(conditions)
-
-        # B. 突破檢測
-        lookback = breakout_days + 1
-        recent_max = float(close_prices.iloc[-lookback:-1].max())
-        is_breakout = curr_price > recent_max
-
-        if score == 6:
+        
+        if sum(conditions) == 6:
+            # 突破判斷
+            is_breakout = curr_price > float(close.iloc[-(breakout_days+1):-1].max())
             if breakout_only and not is_breakout: return None
             
-            # C. 成交量倍數
-            avg_vol = volumes.rolling(20).mean().iloc[-1]
-            vol_ratio = round(float(volumes.iloc[-1]) / avg_vol, 2)
-
-            # D. 相對強度 (RS) 修正算法
-            try:
-                # 使用 iloc[-63] 確保取到大約 3 個月前的數據
-                stock_ret = (curr_price / close_prices.iloc[-63]) - 1
-                bench_ret = (benchmark_series.iloc[-1] / benchmark_series.iloc[-63]) - 1
-                rs_score = round((stock_ret - bench_ret) * 100, 2)
-            except:
-                rs_score = 0.0
-
-            status = f"🔥 {breakout_days}D突破" if is_breakout else "🚀 趨勢向上"
-            dist_high = round((1 - curr_price/high52) * 100, 2)
+            # 獲取 SCTR
+            sctr_val = round(sctr_map.get(ticker, 0), 1)
+            # 量比
+            vol_ratio = round(float(vol.iloc[-1]) / vol.rolling(20).mean().iloc[-1], 2)
             
-            return [ticker, round(curr_price, 2), dist_high, f"{score}/6", vol_ratio, rs_score, status]
+            status = f"🔥 {breakout_days}D突破" if is_breakout else "🚀 趨勢向上"
+            return [ticker, round(curr_price, 2), sctr_val, vol_ratio, status]
         return None
     except: return None
 
-# --- 3. 側邊欄與執行 ---
-st.sidebar.header("專業篩選參數")
-market_choice = st.sidebar.selectbox("市場", ["美股 (S&P 500)", "美股 (Nasdaq 100)", "港股 (恒生指數)"])
-breakout_only = st.sidebar.checkbox("🎯 僅顯示突破", value=False)
-breakout_days = st.sidebar.selectbox("突破天數", [10, 20, 50], index=1)
-min_vol_ratio = st.sidebar.slider("最低成交量倍數", 0.5, 3.0, 1.0, 0.1)
+# --- 4. 側邊欄與運行 ---
+st.sidebar.header("篩選器設定")
+m_choice = st.sidebar.selectbox("市場範圍", ["美股 (S&P 500)", "美股 (Nasdaq 100)", "港股 (恒生指數)"])
+b_only = st.sidebar.checkbox("僅看突破", value=False)
+b_days = st.sidebar.selectbox("突破區間", [20, 50], index=0)
+min_sctr = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 70.0)
 
-if st.sidebar.button("🚀 開始專業掃描"):
-    tickers, bench_ticker = get_stock_list(market_choice)
+if st.sidebar.button("開始掃描"):
+    tickers = get_stock_list(m_choice)
     
-    # --- 關鍵修正：確保下載到正確的大盤 Series ---
-    bench_raw = yf.download(bench_ticker, period="1y", progress=False)
-    if isinstance(bench_raw.columns, pd.MultiIndex):
-        benchmark_series = bench_raw['Close'][bench_ticker]
-    else:
-        benchmark_series = bench_raw['Close']
-    benchmark_series = benchmark_series.dropna()
-
+    st.info(f"正在計算 {m_choice} 的 SCTR 排名系統...")
+    sctr_ranking = calculate_sctr_ranks(tickers)
+    
+    st.info("正在檢索符合 VCP 形態的標的...")
     results = []
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
+    pb = st.progress(0)
     for i, t in enumerate(tickers):
-        status_text.text(f"分析中: {t}")
-        res = check_vcp_pro(t, benchmark_series, breakout_only, breakout_days)
-        if res and res[4] >= min_vol_ratio:
+        res = check_vcp_v2(t, sctr_ranking, b_only, b_days)
+        if res and res[2] >= min_sctr:
             results.append(res)
-        progress_bar.progress((i + 1) / len(tickers))
-
-    status_text.text("掃描完成！")
-
+        pb.progress((i + 1) / len(tickers))
+    
     if results:
-        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點%", "評分", "量比(20日)", "相對強度(RS)", "狀態"])
-        
-        # 強制數值化
-        df_final["相對強度(RS)"] = pd.to_numeric(df_final["相對強度(RS)"], errors='coerce').fillna(0)
-        df_final["量比(20日)"] = pd.to_numeric(df_final["量比(20日)"], errors='coerce').fillna(1.0)
-        
-        # 排序
-        df_final = df_final.sort_values(by=["相對強度(RS)", "量比(20日)"], ascending=[False, False])
-        
-        def get_tv_url(ticker):
-            t_str = str(ticker)
-            code = t_str.replace('.HK', '').lstrip('0') if ".HK" in t_str else t_str.replace('.', '-')
-            prefix = "HKEX:" if ".HK" in t_str else ""
-            return f"https://www.tradingview.com/chart/?symbol={prefix}{code}"
-        
-        df_final['查看'] = df_final['代碼'].apply(get_tv_url)
-
-        st.dataframe(
-            df_final,
-            column_config={
-                "查看": st.column_config.LinkColumn("圖表", display_text="Open Chart")
-            },
-            use_container_width=True
-        )
-        st.success(f"篩選完畢！找到 {len(df_final)} 隻強勢標的。")
+        df_res = pd.DataFrame(results, columns=["代碼", "價格", "SCTR排名", "量比", "狀態"])
+        df_res = df_res.sort_values("SCTR排名", ascending=False)
+        st.dataframe(df_res, use_container_width=True)
+        st.success(f"掃描完畢！SCTR > {min_sctr} 且符合 VCP 的股票共有 {len(df_res)} 隻。")
     else:
-        st.warning("查無符合條件標的。")
+        st.warning("未找到符合條件的股票。")
