@@ -7,7 +7,7 @@ import io
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="J Law VCP Ultimate Screener", layout="wide")
-st.title("🏹 J Law 跨市場自動篩選系統 (美股/港股)")
+st.title("🏹 跨市場自動篩選系統 (美股/港股)")
 
 # --- 1. 自動獲取成份股函數 (加入 S&P 500) ---
 @st.cache_data(ttl=86400)
