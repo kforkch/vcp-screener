@@ -36,8 +36,8 @@ def get_stock_list(market):
         return []
     return []
 
-# --- 2. 核心篩選邏輯 (VCP Trend Template + Breakout) ---
-def check_vcp_trend(ticker, breakout_only=False):
+# --- 2. 核心篩選邏輯 (VCP Trend Template + 動態天數突破) ---
+def check_vcp_trend(ticker, breakout_only=False, breakout_days=20):
     try:
         formatted_ticker = ticker if ".HK" in ticker else ticker.replace('.', '-')
         df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True, threads=False)
@@ -70,8 +70,10 @@ def check_vcp_trend(ticker, breakout_only=False):
         ]
         score = sum(conditions)
 
-        # B. 突破條件：收盤價 > 過去 20 日最高價 (不含今日)
-        recent_max = float(close_prices.iloc[-21:-1].max())
+        # B. 突破條件：收盤價 > 過去 N 日最高價 (不含今日)
+        # breakout_days 由外部傳入
+        lookback = breakout_days + 1
+        recent_max = float(close_prices.iloc[-lookback:-1].max())
         is_breakout = curr_price > recent_max
 
         # 邏輯過濾
@@ -79,7 +81,12 @@ def check_vcp_trend(ticker, breakout_only=False):
             if breakout_only and not is_breakout:
                 return None
             
-            status = "🔥 剛剛突破 (20日新高)" if is_breakout else "🚀 強勢領頭羊"
+            # 根據選擇的天數顯示對應狀態
+            if is_breakout:
+                status = f"🔥 剛剛突破 ({breakout_days}日新高)"
+            else:
+                status = "🚀 強勢領頭羊"
+                
             dist_high = round((1 - curr_price/high52) * 100, 2)
             return [ticker, round(curr_price, 2), dist_high, f"{score}/6", status]
         
@@ -91,8 +98,11 @@ def check_vcp_trend(ticker, breakout_only=False):
 st.sidebar.header("篩選參數")
 market_choice = st.sidebar.selectbox("選擇市場範疇", ["美股 (S&P 500)", "美股 (Nasdaq 100)", "港股 (恒生指數)", "手動輸入"])
 
-# 新增：突破開關
-breakout_only = st.sidebar.checkbox("🎯 僅顯示剛剛突破 (20日新高)", value=False)
+# 1. 突破開關
+breakout_only = st.sidebar.checkbox("🎯 僅顯示剛剛突破", value=False)
+
+# 2. 突破天數選擇 (增加 10 天選項)
+breakout_days = st.sidebar.selectbox("突破天數定義", [10, 20, 50], index=1) # 預設為 20
 
 if market_choice == "手動輸入":
     tickers_input = st.sidebar.text_input("輸入代碼 (逗號隔開)", "NVDA,PLTR,0700.HK")
@@ -102,7 +112,7 @@ else:
 
 # --- 4. 執行掃描 ---
 if st.sidebar.button("🚀 開始全自動掃描"):
-    st.subheader(f"📊 {market_choice} 篩選結果")
+    st.subheader(f"📊 {market_choice} 篩選結果 (突破定義: {breakout_days}日)")
     results = []
     
     progress_bar = st.progress(0)
@@ -110,8 +120,8 @@ if st.sidebar.button("🚀 開始全自動掃描"):
     
     for i, t in enumerate(tickers):
         status_text.text(f"正在分析第 {i+1}/{len(tickers)} 隻: {t}")
-        # 將側邊欄的狀態傳入函數
-        res = check_vcp_trend(t, breakout_only=breakout_only)
+        # 傳入 breakout_days
+        res = check_vcp_trend(t, breakout_only=breakout_only, breakout_days=breakout_days)
         if res:
             results.append(res)
         progress_bar.progress((i + 1) / len(tickers))
@@ -138,10 +148,10 @@ if st.sidebar.button("🚀 開始全自動掃描"):
             column_config={"查看圖表": st.column_config.LinkColumn("點擊打開 TradingView", display_text="Open Chart")},
             use_container_width=True
         )
-        st.success(f"篩選完畢！找到 {len(results)} 隻符合條件的強勢股。")
+        st.success(f"篩選完畢！找到 {len(results)} 隻符合條件的標的。")
         st.balloons()
     else:
-        st.warning("⚠️ 目前沒有標的符合您的篩選條件（趨勢 6/6 + 突破設定）。")
+        st.warning(f"⚠️ 目前沒有標的符合您的篩選條件（趨勢 6/6 + {breakout_days}日突破）。")
 
 st.divider()
-st.caption("註：突破定義為今日收盤價高於過去 20 個交易日的最高點。")
+st.caption(f"註：突破定義為今日收盤價高於過去 {breakout_days} 個交易日的最高點。")
