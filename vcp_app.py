@@ -127,23 +127,32 @@ if st.sidebar.button("🚀 開始全自動掃描"):
     
     status_text.text("掃描完成！")
     
-    if results:
-        # 修改這裡的 columns 以對應 check_vcp_trend 的回傳值
-        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離 52 週高點 %", "評分", "狀態"])
+   if results:
+        # 1. 建立 DataFrame
+        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點數值", "評分", "狀態"])
         
-        # 關鍵：按評分由高到低排序，同分則按距離高點由近到遠排序
-        df_final = df_final.sort_values(by=["評分", "距離 52 週高點 %"], ascending=[False, True])
+        # 2. 先進行數值排序（確保排序正確）
+        df_final = df_final.sort_values(by=["評分", "距離高點數值"], ascending=[False, True])
         
+        # 3. 將數值轉為顯示用的百分比格式
+        df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
+        
+        # 4. 生成 TradingView 連結
         df_final['查看圖表'] = df_final['代碼'].apply(lambda x: f"https://www.tradingview.com/chart/?symbol={x.replace('.HK', '').replace('.', '-')}")
         
+        # 5. 只選取要顯示的欄位
+        display_cols = ["代碼", "現價", "距離 52 週高點 %", "評分", "狀態", "查看圖表"]
+        
         st.dataframe(
-            df_final, 
+            df_final[display_cols], 
             column_config={"查看圖表": st.column_config.Link_Column("點擊打開 TradingView")},
             use_container_width=True
         )
+        st.success(f"篩選完畢！共找到 {len(df_final)} 隻符合條件（3/6分以上）的股票。")
         st.balloons()
     else:
-        st.warning("目前沒有股票符合趨勢條件（甚至未達觀察門檻 3/6）。")
+        # 如果 results 是空的，至少會看到這一行
+        st.warning("目前沒有任何股票符合最低門檻 (3/6 分)。請嘗試更換市場或手動輸入強勢股測試。")
 
 # --- 底部提示 ---
 st.divider()
