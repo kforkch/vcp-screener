@@ -28,18 +28,33 @@ def get_stock_list(market):
                 if 'Symbol' in t.columns: return t['Symbol'].tolist(), "^IXIC"
         
         elif market == "中國 A 股 (滬深 300)":
-            # 從 Wiki 獲取滬深 300
             url = 'https://en.wikipedia.org/wiki/CSI_300_Index'
-            table = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))[3]
+            tables = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))
+            
+            # 增強：自動搜尋包含 'Ticker' 且長度接近 300 的表格
+            target_table = None
+            for t in tables:
+                if ('Ticker' in t.columns or 'Symbol' in t.columns) and len(t) > 200:
+                    target_table = t
+                    break
+            
+            if target_table is None:
+                # 備案：如果 Wiki 抓不到，手動返回幾個指標股測試，確保不是 yfinance 壞掉
+                st.sidebar.warning("無法從 Wiki 獲取名單，改用測試模式")
+                return ["600519.SS", "000858.SZ", "300750.SZ"], "000300.SS"
+            
             tickers = []
-            for _, row in table.iterrows():
-                code = str(row['Ticker']).zfill(6) # 確保 6 位數
-                suffix = ".SS" if row['Exchange'] == 'Shanghai' else ".SZ"
-                tickers.append(f"{code}{suffix}")
+            col = 'Ticker' if 'Ticker' in target_table.columns else 'Symbol'
+            for _, row in target_table.iterrows():
+                # 確保代碼是 6 位數字字串 (如 600519)
+                raw_val = str(row[col]).split('.')[0].zfill(6)
+                # 判定交易所後綴
+                exch = str(row['Exchange']) if 'Exchange' in target_table.columns else ""
+                suffix = ".SS" if "Shanghai" in exch or raw_val.startswith(('60', '68')) else ".SZ"
+                tickers.append(f"{raw_val}{suffix}")
             return tickers, "000300.SS"
 
         elif market == "港股 (恒生指數)":
-            # 範例列出核心藍籌，亦可擴充
             hsi_list = ["0700.HK", "9988.HK", "3690.HK", "1211.HK", "1810.HK", "2318.HK", "0005.HK", "0388.HK", "9618.HK", "2269.HK"]
             return hsi_list, "^HSI"
             
