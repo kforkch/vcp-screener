@@ -106,19 +106,31 @@ if st.sidebar.button("🚀 開始專業掃描"):
         progress_bar.progress((i + 1) / len(tickers))
 
     if results:
+        # 1. 建立 DataFrame
         df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點%", "評分", "量比(20日)", "相對強度(RS)", "狀態"])
         
-        # 專業排序：RS 越高越好，量比越高越好
+        # --- 關鍵修正：確保數值欄位真的是數字，並處理掉可能出現的 NaN ---
+        # error='coerce' 會把無法轉型的資料變成 NaN，隨後用 dropna 刪除
+        df_final["相對強度(RS)"] = pd.to_numeric(df_final["相對強度(RS)"], errors='coerce')
+        df_final["量比(20日)"] = pd.to_numeric(df_final["量比(20日)"], errors='coerce')
+        
+        # 刪除任何含有 NaN 的行（確保排序不會崩潰）
+        df_final = df_final.dropna(subset=["相對強度(RS)", "量比(20日)"])
+        
+        # 2. 專業排序
         df_final = df_final.sort_values(by=["相對強度(RS)", "量比(20日)"], ascending=[False, False])
         
-        # TradingView 連結
+        # 3. 生成 TradingView 連結
         def get_tv_url(ticker):
-            code = ticker.replace('.HK', '').lstrip('0') if ".HK" in ticker else ticker.replace('.', '-')
-            prefix = "HKEX:" if ".HK" in ticker else ""
+            # 確保代碼是字串
+            t_str = str(ticker)
+            code = t_str.replace('.HK', '').lstrip('0') if ".HK" in t_str else t_str.replace('.', '-')
+            prefix = "HKEX:" if ".HK" in t_str else ""
             return f"https://www.tradingview.com/chart/?symbol={prefix}{code}"
         
         df_final['圖表'] = df_final['代碼'].apply(get_tv_url)
 
+        # 4. 顯示結果
         st.dataframe(
             df_final,
             column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")},
