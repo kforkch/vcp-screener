@@ -106,11 +106,14 @@ def check_vcp_trend(ticker):
         score = sum(conditions)
         dist_high = round((1 - curr_price/high52) * 100, 2)
         
-        # 門檻：3 分以上
-        if score >= 3:
-            status = "🚀 強勢領頭羊" if score == 6 else "👀 觀察名單"
-            # 注意：回傳 5 個值，對應你的 DataFrame columns
+        # --- 修改門檻為 6 分滿分 ---
+        if score == 6:
+            status = "🚀 強勢領頭羊"
+            # 回傳 5 個值，確保與你的 DataFrame 欄位對齊
             return [ticker, round(curr_price, 2), dist_high, f"{score}/6", status]
+        
+        # 低於 6 分的標的全部跳過
+        return None
 
     except Exception as e:
         # 這裡的錯誤訊息會幫你抓出具體哪隻股票、哪個步驟出問題
@@ -165,11 +168,10 @@ if st.sidebar.button("🚀 開始全自動掃描"):
             column_config={"查看圖表": st.column_config.LinkColumn("點擊打開 TradingView")},
             use_container_width=True
         )
-        st.success(f"篩選完畢！共找到 {len(df_final)} 隻符合條件（3/6分以上）的股票。")
+        st.success(f"篩選完畢！在 {len(tickers)} 隻股票中找到了 {len(results)} 隻完全符合 6/6 趨勢模板的強勢股。")
         st.balloons()
     else:
-        # 如果 results 是空的，至少會看到這一行
-        st.warning("目前沒有任何股票符合最低門檻 (3/6 分)。請嘗試更換市場或手動輸入強勢股測試。")
+        st.warning("⚠️ 目前沒有股票完全符合『 6/6 滿分』趨勢模板條件。這可能代表市場環境正在轉弱或進行整理。")
 
 # --- 底部提示 ---
 st.divider()
