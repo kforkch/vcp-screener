@@ -186,7 +186,7 @@ if results:
         st.success(f"篩選完畢！找到 {len(results)} 隻符合 6/6 趨勢模板的強勢股。")
         st.balloons()
         
-    else:
+            else:
         st.warning("⚠️ 目前沒有股票完全符合『 6/6 滿分』趨勢模板條件。")
 
 # --- 底部提示 ---
