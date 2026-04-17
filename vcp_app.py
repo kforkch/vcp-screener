@@ -10,7 +10,7 @@ import numpy as np
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
 st.title("🏹 VCP Alpha 全球終極交易終端")
 
-# --- 1. 自動獲取成份股 (整合中、港、美) ---
+# --- 1. 自動獲取成份股 ---
 @st.cache_data(ttl=86400)
 def get_stock_list(market):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -92,7 +92,7 @@ def calculate_sctr_ranks(tickers):
         return df_sctr.set_index('ticker')['rank'].to_dict()
     except: return {}
 
-# --- 3. 核心篩選 ---
+# --- 3. 核心篩選與產業獲取 ---
 def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
     try:
         df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
@@ -105,6 +105,7 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
         sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
         low52, high52 = float(close.min()), float(close.max())
         
+        # Minervini 趨勢模板
         cond = [
             curr_p > sma150 and curr_p > sma200, 
             sma150 > sma200, 
@@ -115,13 +116,12 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
         ]
         
         if sum(cond) == 6:
-            # --- 產業分析代碼：僅在符合 VCP 條件後執行，節省 API 額度 ---
+            # 只有符合 VCP 初篩才抓取產業資訊以優化效能
             sector = "未知"
             try:
-                t_info = yf.Ticker(ticker).info
-                sector = t_info.get('sector', '其他/數據缺失')
-            except:
-                pass
+                info = yf.Ticker(ticker).info
+                sector = info.get('sector', '其他')
+            except: pass
 
             recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
             prev_range = (close.iloc[-25:-5].max() - close.iloc[-25:-5].min()) / close.iloc[-25:-5].min()
@@ -173,25 +173,18 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
         pb = st.progress(0)
         for i, t in enumerate(tickers):
             res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
-            # 判斷 SCTR 是否達標
-            if res and res[3] >= min_sctr_val: 
-                results.append(res)
+            if res and res[3] >= min_sctr_val: results.append(res)
             pb.progress((i + 1) / len(tickers))
 
         if results:
-            # 欄位中增加了 "行業"
-            df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態", "行業"])
+            df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態", "產業"])
             
-            # --- 產業熱點視覺化 ---
+            # --- 產業流向統計圖 ---
             st.subheader("🔥 產業資金流向分析")
-            sector_stats = df['行業'].value_counts()
-            col_chart, col_data = st.columns([2, 1])
-            with col_chart:
-                st.bar_chart(sector_stats)
-            with col_data:
-                st.dataframe(sector_stats, use_container_width=True)
-            st.write("---")
-
+            sector_counts = df['產業'].value_counts()
+            st.bar_chart(sector_counts)
+            
+            # --- 詳細列表 ---
             def make_link(t):
                 t_str = str(t)
                 if ".HK" in t_str:
@@ -205,7 +198,11 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
                     return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
             
             df['圖表'] = df['代碼'].apply(make_link)
-            st.dataframe(df.sort_values("SCTR排名", ascending=False), column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, use_container_width=True)
-            st.success(f"完成！找到 {len(df)} 隻符合條件的強勢標的。")
+            st.dataframe(
+                df.sort_values("SCTR排名", ascending=False), 
+                column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, 
+                use_container_width=True
+            )
+            st.success(f"完成！找到 {len(df)} 隻符合條件的標的。")
         else:
-            st.warning("當前過濾條件下無符合標的，請嘗試調低 SCTR 排名要求。")
+            st.warning("當前環境下無符合 VCP 及 SCTR 篩選條件的標的。")
