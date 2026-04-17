@@ -6,152 +6,124 @@ import requests
 import io
 
 # --- 頁面配置 ---
-st.set_page_config(page_title="VCP Ultimate Screener", layout="wide")
-st.title("🏹 跨市場自動篩選系統 (美股/港股)")
+st.set_page_config(page_title="VCP Pro Screener", layout="wide")
+st.title("🏹 VCP 專業量化篩選系統 (成交量 + RS 強度)")
 
-# --- 1. 自動獲取成份股函數 ---
+# --- 1. 自動獲取成份股 (新增大盤基準用於 RS 計算) ---
 @st.cache_data(ttl=86400)
 def get_stock_list(market):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
         if market == "美股 (S&P 500)":
             url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-            response = requests.get(url, headers=headers)
-            table = pd.read_html(io.StringIO(response.text))[0]
-            return table['Symbol'].str.replace('.', '-', regex=False).tolist()
+            table = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))[0]
+            return table['Symbol'].str.replace('.', '-', regex=False).tolist(), "^GSPC"
         elif market == "美股 (Nasdaq 100)":
             url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
-            response = requests.get(url, headers=headers)
-            tables = pd.read_html(io.StringIO(response.text))
+            tables = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))
             for t in tables:
-                if 'Ticker' in t.columns: return t['Ticker'].tolist()
-                if 'Symbol' in t.columns: return t['Symbol'].tolist()
-            return ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA"]
+                if 'Ticker' in t.columns: return t['Ticker'].tolist(), "^IXIC"
+                if 'Symbol' in t.columns: return t['Symbol'].tolist(), "^IXIC"
         elif market == "港股 (恒生指數)":
-            return ["0700.HK", "9988.HK", "3690.HK", "1211.HK", "1810.HK", "2318.HK", "0005.HK", "0388.HK", "9618.HK", "2269.HK"]
-    except Exception as e:
-        st.error(f"獲取名單失敗: {e}")
-        return []
-    return []
+            return ["0700.HK", "9988.HK", "3690.HK", "1211.HK", "1810.HK", "2318.HK", "0005.HK", "0388.HK", "9618.HK", "2269.HK"], "^HSI"
+    except: return [], None
 
-# --- 2. 核心篩選邏輯 (VCP Trend Template + 動態天數突破) ---
-def check_vcp_trend(ticker, breakout_only=False, breakout_days=20):
+# --- 2. 核心篩選邏輯 (加入 Volume 與 RS) ---
+def check_vcp_pro(ticker, benchmark_df, breakout_only=False, breakout_days=20):
     try:
         formatted_ticker = ticker if ".HK" in ticker else ticker.replace('.', '-')
-        df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True, threads=False)
+        df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True)
         
-        if df.empty or len(df) < 100:
-            return None
+        if df.empty or len(df) < 150: return None
         
+        # 處理資料
         close_prices = df['Close'][formatted_ticker] if isinstance(df.columns, pd.MultiIndex) else df['Close']
-        close_prices = close_prices.astype(float)
+        volumes = df['Volume'][formatted_ticker] if isinstance(df.columns, pd.MultiIndex) else df['Volume']
         curr_price = float(close_prices.iloc[-1])
 
-        # A. 趨勢條件 (6/6)
-        sma50 = ta.sma(close_prices, 50)
-        sma150 = ta.sma(close_prices, 150)
-        sma200 = ta.sma(close_prices, 200)
-        if sma50 is None or sma150 is None or sma200 is None: return None
-        s50, s150, s200 = sma50.iloc[-1], sma150.iloc[-1], sma200.iloc[-1]
-        
-        if pd.isna(s50) or pd.isna(s150) or pd.isna(s200): return None
-
+        # A. 趨勢條件 (Minervini 6/6)
+        sma50 = ta.sma(close_prices, 50).iloc[-1]
+        sma150 = ta.sma(close_prices, 150).iloc[-1]
+        sma200 = ta.sma(close_prices, 200).iloc[-1]
         low52, high52 = float(close_prices.min()), float(close_prices.max())
         
         conditions = [
-            curr_price > s150 and curr_price > s200,
-            s150 > s200,
-            s50 > s150 and s50 > s200,
-            curr_price > s50,
+            curr_price > sma150 and curr_price > sma200,
+            sma150 > sma200,
+            sma50 > sma150 and sma50 > sma200,
+            curr_price > sma50,
             curr_price >= (low52 * 1.25),
             curr_price >= (high52 * 0.75)
         ]
         score = sum(conditions)
 
-        # B. 突破條件：收盤價 > 過去 N 日最高價 (不含今日)
-        # breakout_days 由外部傳入
+        # B. 突破檢測
         lookback = breakout_days + 1
         recent_max = float(close_prices.iloc[-lookback:-1].max())
         is_breakout = curr_price > recent_max
 
-        # 邏輯過濾
         if score == 6:
-            if breakout_only and not is_breakout:
-                return None
+            if breakout_only and not is_breakout: return None
             
-            # 根據選擇的天數顯示對應狀態
-            if is_breakout:
-                status = f"🔥 剛剛突破 ({breakout_days}日新高)"
-            else:
-                status = "🚀 強勢領頭羊"
-                
+            # C. 加入「成交量倍數」 (Relative Volume)
+            avg_vol = volumes.rolling(20).mean().iloc[-1]
+            vol_ratio = round(float(volumes.iloc[-1]) / avg_vol, 2)
+
+            # D. 加入「相對強度 (RS)」(對標大盤)
+            # 計算該股 3 個月回報 vs 大盤 3 個月回報
+            stock_ret = (curr_price / close_prices.iloc[-63]) - 1
+            bench_ret = (benchmark_df.iloc[-1] / benchmark_df.iloc[-63]) - 1
+            rs_score = round((stock_ret - bench_ret) * 100, 2) # 正數代表贏大盤
+
+            status = f"🔥 {breakout_days}D突破" if is_breakout else "🚀 趨勢向上"
             dist_high = round((1 - curr_price/high52) * 100, 2)
-            return [ticker, round(curr_price, 2), dist_high, f"{score}/6", status]
-        
+            
+            return [ticker, round(curr_price, 2), dist_high, f"{score}/6", vol_ratio, rs_score, status]
         return None
-    except Exception:
-        return None
+    except: return None
 
-# --- 3. 側邊欄控制 ---
-st.sidebar.header("篩選參數")
-market_choice = st.sidebar.selectbox("選擇市場範疇", ["美股 (S&P 500)", "美股 (Nasdaq 100)", "港股 (恒生指數)", "手動輸入"])
+# --- 3. 側邊欄與執行 ---
+st.sidebar.header("專業篩選參數")
+market_choice = st.sidebar.selectbox("市場", ["美股 (S&P 500)", "美股 (Nasdaq 100)", "港股 (恒生指數)"])
+breakout_only = st.sidebar.checkbox("🎯 僅顯示突破", value=False)
+breakout_days = st.sidebar.selectbox("突破天數", [10, 20, 50], index=1)
+min_vol_ratio = st.sidebar.slider("最低成交量倍數", 0.5, 3.0, 1.0, 0.1)
 
-# 1. 突破開關
-breakout_only = st.sidebar.checkbox("🎯 僅顯示剛剛突破", value=False)
-
-# 2. 突破天數選擇 (增加 10 天選項)
-breakout_days = st.sidebar.selectbox("突破天數定義", [10, 20, 50], index=1) # 預設為 20
-
-if market_choice == "手動輸入":
-    tickers_input = st.sidebar.text_input("輸入代碼 (逗號隔開)", "NVDA,PLTR,0700.HK")
-    tickers = [t.strip() for t in tickers_input.split(",")]
-else:
-    tickers = get_stock_list(market_choice)
-
-# --- 4. 執行掃描 ---
-if st.sidebar.button("🚀 開始全自動掃描"):
-    st.subheader(f"📊 {market_choice} 篩選結果 (突破定義: {breakout_days}日)")
-    results = []
+if st.sidebar.button("🚀 開始專業掃描"):
+    tickers, bench_ticker = get_stock_list(market_choice)
+    benchmark_data = yf.download(bench_ticker, period="1y", progress=False)['Close']
     
+    results = []
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
+
     for i, t in enumerate(tickers):
-        status_text.text(f"正在分析第 {i+1}/{len(tickers)} 隻: {t}")
-        # 傳入 breakout_days
-        res = check_vcp_trend(t, breakout_only=breakout_only, breakout_days=breakout_days)
-        if res:
+        status_text.text(f"分析中: {t}")
+        res = check_vcp_pro(t, benchmark_data, breakout_only, breakout_days)
+        # 額外過濾成交量
+        if res and res[4] >= min_vol_ratio:
             results.append(res)
         progress_bar.progress((i + 1) / len(tickers))
-    
-    status_text.text("掃描完成！")
-    
-    if results:
-        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點數值", "評分", "狀態"])
-        df_final = df_final.sort_values(by=["評分", "距離高點數值"], ascending=[False, True])
-        df_final["距離 52 週高點 %"] = df_final["距離高點數值"].apply(lambda x: f"{x}%")
-        
-        def get_tv_url(ticker):
-            if ".HK" in ticker:
-                code = ticker.replace('.HK', '').lstrip('0')
-                return f"https://www.tradingview.com/chart/?symbol=HKEX:{code}"
-            else:
-                return f"https://www.tradingview.com/chart/?symbol={ticker.replace('.', '-')}"
 
-        df_final['查看圖表'] = df_final['代碼'].apply(get_tv_url)
+    if results:
+        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點%", "評分", "量比(20日)", "相對強度(RS)", "狀態"])
         
-        display_cols = ["代碼", "現價", "距離 52 週高點 %", "評分", "狀態", "查看圖表"]
+        # 專業排序：RS 越高越好，量比越高越好
+        df_final = df_final.sort_values(by=["相對強度(RS)", "量比(20日)"], ascending=[False, False])
+        
+        # TradingView 連結
+        def get_tv_url(ticker):
+            code = ticker.replace('.HK', '').lstrip('0') if ".HK" in ticker else ticker.replace('.', '-')
+            prefix = "HKEX:" if ".HK" in ticker else ""
+            return f"https://www.tradingview.com/chart/?symbol={prefix}{code}"
+        
+        df_final['圖表'] = df_final['代碼'].apply(get_tv_url)
+
         st.dataframe(
-            df_final[display_cols], 
-            column_config={"查看圖表": st.column_config.LinkColumn("點擊打開 TradingView", display_text="Open Chart")},
+            df_final,
+            column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")},
             use_container_width=True
         )
-        st.success(f"篩選完畢！找到 {len(results)} 隻符合條件的標的。")
-        st.balloons()
+        st.success(f"找到 {len(results)} 隻標的。")
     else:
-        st.warning(f"⚠️ 目前沒有標的符合您的篩選條件（趨勢 6/6 + {breakout_days}日突破）。")
-
-st.divider()
-st.caption(f"註：突破定義為今日收盤價高於過去 {breakout_days} 個交易日的最高點。")
+        st.warning("查無符合條件標的。")
