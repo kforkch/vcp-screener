@@ -49,7 +49,6 @@ def get_stock_list(market):
             return tickers, "000300.SS"
 
         elif market == "港股 (恒生指數)":
-            # 擴展至完整的恒生指數成份股名單
             hsi_list = [
                 "0001.HK", "0002.HK", "0003.HK", "0005.HK", "0006.HK", "0011.HK", "0012.HK", "0016.HK", 
                 "0017.HK", "0027.HK", "0066.HK", "0101.HK", "0175.HK", "0241.HK", "0267.HK", "0288.HK", 
@@ -69,29 +68,21 @@ def get_stock_list(market):
 
 # --- 2. SCTR 排名計算 ---
 def calculate_sctr_ranks(tickers):
-    # 修正：yf.download 在多標配下返回的是 MultiIndex，需要精確提取 Close
     try:
         raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
-        if 'Close' in raw_data:
-            data = raw_data['Close']
-        else:
-            data = raw_data
+        data = raw_data['Close'] if 'Close' in raw_data else raw_data
     except:
         return {}
 
     sctr_data = []
     for ticker in tickers:
         try:
-            # 處理單一標的或多標的的 Series 提取
             series = data[ticker].dropna() if isinstance(data, pd.DataFrame) and ticker in data.columns else data.dropna()
             if len(series) < 200: continue
             
-            sma200 = series.rolling(200).mean().iloc[-1]
-            sma50 = series.rolling(50).mean().iloc[-1]
-            dist_200 = (series.iloc[-1]/sma200-1)*100
-            dist_50 = (series.iloc[-1]/sma50-1)*100
-            roc125 = (series.iloc[-1]/series.iloc[-125]-1)*100
-            roc20 = (series.iloc[-1]/series.iloc[-20]-1)*100
+            sma200, sma50 = series.rolling(200).mean().iloc[-1], series.rolling(50).mean().iloc[-1]
+            dist_200, dist_50 = (series.iloc[-1]/sma200-1)*100, (series.iloc[-1]/sma50-1)*100
+            roc125, roc20 = (series.iloc[-1]/series.iloc[-125]-1)*100, (series.iloc[-1]/series.iloc[-20]-1)*100
             rsi = ta.rsi(series, length=14).iloc[-1]
             
             raw_score = (dist_200*0.3 + roc125*0.3) + (dist_50*0.15 + roc20*0.15) + (rsi*0.1)
@@ -113,7 +104,6 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
         vol = df['Volume']
         curr_p = float(close.iloc[-1])
         
-        # Minervini 6/6 趨勢模板
         sma50 = ta.sma(close, 50).iloc[-1]
         sma150 = ta.sma(close, 150).iloc[-1]
         sma200 = ta.sma(close, 200).iloc[-1]
@@ -129,7 +119,6 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
         ]
         
         if sum(cond) == 6:
-            # 波動收縮檢測
             recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
             prev_range = (close.iloc[-25:-5].max() - close.iloc[-25:-5].min()) / close.iloc[-25:-5].min()
             is_tight = "✅ 緊湊" if recent_range < (prev_range * 0.7) else "❌ 鬆散"
@@ -157,67 +146,55 @@ only_b = st.sidebar.checkbox("僅看突破", value=False)
 if st.sidebar.button("🚀 執行全球同步掃描"):
     tickers, bench_code = get_stock_list(market_name)
     
-    # --- 大盤溫度計 ---
-try:
-    # 下載基準指數數據
-    bench_df = yf.download(bench_code, period="1y", progress=False, auto_adjust=True)
-    
-    # 判斷數據是否為空
-    if bench_df.empty:
-        st.error(f"⚠️ 無法獲取基準指數 ({bench_code}) 的數據，請檢查網路或代碼。")
-        b_close, b_sma50, health = 0.0, 0.0, "⚪ 數據缺失"
-    else:
-        # 確保提取的是 Close 欄位且移除空值
-        if isinstance(bench_df.columns, pd.MultiIndex):
-            b_series = bench_df['Close'][bench_code].dropna()
+    # --- 大盤溫度計 (修正後縮進) ---
+    try:
+        bench_df = yf.download(bench_code, period="1y", progress=False, auto_adjust=True)
+        if bench_df.empty:
+            st.error(f"⚠️ 無法獲取基準指數 ({bench_code}) 的數據。")
+            b_close = 0.0
         else:
-            b_series = bench_df['Close'].dropna()
+            b_series = bench_df['Close'][bench_code].dropna() if isinstance(bench_df.columns, pd.MultiIndex) else bench_df['Close'].dropna()
             
-        if len(b_series) > 0:
-            b_close = float(b_series.iloc[-1])
-            b_sma50 = float(b_series.rolling(50).mean().iloc[-1])
-            health = "🟢 牛市環境" if b_close > b_sma50 else "🔴 熊市/調整"
-        else:
-            b_close, b_sma50, health = 0.0, 0.0, "⚪ 數據不足"
-            
-except Exception as e:
-    st.error(f"🌡️ 大盤溫度計運行出錯: {e}")
-    b_close, b_sma50, health = 0.0, 0.0, "⚪ 系統錯誤"
-
-# 顯示指標 (只有在有數據時才顯示)
-if b_close > 0:
-    c1, c2, c3 = st.columns(3)
-    c1.metric(f"{market_name} 狀態", health)
-    c2.metric("基準指數位置", f"{b_close:.2f}")
-    c3.metric("偏離 50MA", f"{((b_close/b_sma50-1)*100):.2f}%")
-
-    st.write("---")
-    st.info(f"📊 正在計算 {market_name} 的 SCTR 排名...")
-    sctr_ranks = calculate_sctr_ranks(tickers)
-    
-    st.info("🔍 正在檢測個股 VCP 形態...")
-    results = []
-    pb = st.progress(0)
-    for i, t in enumerate(tickers):
-        res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
-        if res and res[3] >= min_sctr_val: results.append(res)
-        pb.progress((i + 1) / len(tickers))
-
-    if results:
-        df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態"])
-        
-        def make_link(t):
-            t_str = str(t)
-            if ".HK" in t_str:
-                return f"https://www.tradingview.com/chart/?symbol=HKEX:{t_str.replace('.HK','').lstrip('0')}"
-            elif ".SS" in t_str or ".SZ" in t_str:
-                return f"https://www.tradingview.com/chart/?symbol={'SSE' if '.SS' in t_str else 'SZSE'}:{t_str.split('.')[0]}"
+            if len(b_series) > 0:
+                b_close = float(b_series.iloc[-1])
+                b_sma50 = float(b_series.rolling(50).mean().iloc[-1])
+                health = "🟢 牛市環境" if b_close > b_sma50 else "🔴 熊市/調整"
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric(f"{market_name} 狀態", health)
+                c2.metric("基準指數位置", f"{b_close:.2f}")
+                c3.metric("偏離 50MA", f"{((b_close/b_sma50-1)*100):.2f}%")
             else:
-                return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
+                b_close = 0.0
+                st.warning("基準指數數據長度不足。")
+    except Exception as e:
+        st.error(f"🌡️ 大盤溫度計運行出錯: {e}")
+        b_close = 0.0
+
+    if b_close > 0:
+        st.write("---")
+        st.info(f"📊 正在計算 {market_name} 的 SCTR 排名...")
+        sctr_ranks = calculate_sctr_ranks(tickers)
         
-        df['圖表'] = df['代碼'].apply(make_link)
-        df = df.sort_values("SCTR排名", ascending=False)
-        st.dataframe(df, column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, use_container_width=True)
-        st.success(f"找到 {len(df)} 隻標的。")
-    else:
-        st.warning("當前市場環境下無符合標的。")
+        st.info("🔍 正在檢測個股 VCP 形態...")
+        results = []
+        pb = st.progress(0)
+        for i, t in enumerate(tickers):
+            res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
+            if res and res[3] >= min_sctr_val: results.append(res)
+            pb.progress((i + 1) / len(tickers))
+
+        if results:
+            df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態"])
+            def make_link(t):
+                t_str = str(t)
+                if ".HK" in t_str: return f"https://www.tradingview.com/chart/?symbol=HKEX:{t_str.replace('.HK','').lstrip('0')}"
+                elif ".SS" in t_str or ".SZ" in t_str: return f"https://www.tradingview.com/chart/?symbol={'SSE' if '.SS' in t_str else 'SZSE'}:{t_str.split('.')[0]}"
+                else: return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
+            
+            df['圖表'] = df['代碼'].apply(make_link)
+            df = df.sort_values("SCTR排名", ascending=False)
+            st.dataframe(df, column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, use_container_width=True)
+            st.success(f"找到 {len(df)} 隻標的。")
+        else:
+            st.warning("當前市場環境下無符合標的。")
