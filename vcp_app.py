@@ -58,6 +58,10 @@ def get_stock_list(market):
 # --- 2. 核心篩選邏輯 (VCP Trend Template) ---
 def check_vcp_trend(ticker):
     try:
+        # --- 修正：只有非港股才將點換成橫線 ---
+        if ".HK" in ticker:
+            formatted_ticker = ticker  # 港股保持 0700.HK
+        else:
         formatted_ticker = ticker.replace('.', '-')
         df = yf.download(formatted_ticker, period="1y", progress=False, auto_adjust=True, threads=False)
         
