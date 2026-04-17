@@ -106,36 +106,39 @@ if st.sidebar.button("🚀 開始專業掃描"):
         progress_bar.progress((i + 1) / len(tickers))
 
     if results:
-        # 1. 建立 DataFrame
-        df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點%", "評分", "量比(20日)", "相對強度(RS)", "狀態"])
+        # 1. 建立初始 DataFrame
+        df_raw = pd.DataFrame(results, columns=["代碼", "現價", "距離高點%", "評分", "量比(20日)", "相對強度(RS)", "狀態"])
         
-        # --- 關鍵修正：確保數值欄位真的是數字，並處理掉可能出現的 NaN ---
-        # error='coerce' 會把無法轉型的資料變成 NaN，隨後用 dropna 刪除
-        df_final["相對強度(RS)"] = pd.to_numeric(df_final["相對強度(RS)"], errors='coerce')
-        df_final["量比(20日)"] = pd.to_numeric(df_final["量比(20日)"], errors='coerce')
+        # 2. 強制轉型並處理異常值（避免排序崩潰）
+        df_raw["相對強度(RS)"] = pd.to_numeric(df_raw["相對強度(RS)"], errors='coerce')
+        df_raw["量比(20日)"] = pd.to_numeric(df_raw["量比(20日)"], errors='coerce')
         
-        # 刪除任何含有 NaN 的行（確保排序不會崩潰）
-        df_final = df_final.dropna(subset=["相對強度(RS)", "量比(20日)"])
+        # 填充 NaN 以免被 dropna 刪光，這樣至少能看到股票代碼
+        df_raw["相對強度(RS)"] = df_raw["相對強度(RS)"].fillna(0)
+        df_raw["量比(20日)"] = df_raw["量比(20日)"].fillna(1.0)
         
-        # 2. 專業排序
-        df_final = df_final.sort_values(by=["相對強度(RS)", "量比(20日)"], ascending=[False, False])
+        # 3. 排序
+        df_final = df_raw.sort_values(by=["相對強度(RS)", "量比(20日)"], ascending=[False, False])
         
-        # 3. 生成 TradingView 連結
+        # 4. 生成 TradingView 連結
         def get_tv_url(ticker):
-            # 確保代碼是字串
             t_str = str(ticker)
             code = t_str.replace('.HK', '').lstrip('0') if ".HK" in t_str else t_str.replace('.', '-')
             prefix = "HKEX:" if ".HK" in t_str else ""
             return f"https://www.tradingview.com/chart/?symbol={prefix}{code}"
         
-        df_final['圖表'] = df_final['代碼'].apply(get_tv_url)
+        df_final['查看'] = df_final['代碼'].apply(get_tv_url)
 
-        # 4. 顯示結果
+        # 5. 確保顯示的欄位與 DataFrame 內容完全一致
+        # 注意：檢查你的 column_config 裡的 Key 是否正確
         st.dataframe(
             df_final,
-            column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")},
+            column_config={
+                "查看": st.column_config.LinkColumn("圖表連結", display_text="Open Chart")
+            },
             use_container_width=True
         )
-        st.success(f"找到 {len(results)} 隻標的。")
+        
+        st.success(f"找到 {len(df_final)} 隻標的。")
     else:
         st.warning("查無符合條件標的。")
