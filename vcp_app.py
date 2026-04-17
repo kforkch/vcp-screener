@@ -10,7 +10,7 @@ import numpy as np
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
 st.title("🏹 VCP Alpha 全球終極交易終端")
 
-# --- 1. 自動獲取成份股 ---
+# --- 1. 自動獲取成份股 (整合中、港、美) ---
 @st.cache_data(ttl=86400)
 def get_stock_list(market):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -70,18 +70,22 @@ def calculate_sctr_ranks(tickers):
     try:
         raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
         data = raw_data['Close'] if 'Close' in raw_data else raw_data
+        
         sctr_data = []
         for ticker in tickers:
             try:
                 series = data[ticker].dropna() if isinstance(data, pd.DataFrame) else data.dropna()
                 if len(series) < 200: continue
+                
                 sma200, sma50 = series.rolling(200).mean().iloc[-1], series.rolling(50).mean().iloc[-1]
                 dist_200, dist_50 = (series.iloc[-1]/sma200-1)*100, (series.iloc[-1]/sma50-1)*100
                 roc125, roc20 = (series.iloc[-1]/series.iloc[-125]-1)*100, (series.iloc[-1]/series.iloc[-20]-1)*100
                 rsi = ta.rsi(series, length=14).iloc[-1]
+                
                 raw = (dist_200*0.3 + roc125*0.3) + (dist_50*0.15 + roc20*0.15) + (rsi*0.1)
                 sctr_data.append({'ticker': ticker, 'raw': raw})
             except: continue
+            
         if not sctr_data: return {}
         df_sctr = pd.DataFrame(sctr_data)
         df_sctr['rank'] = df_sctr['raw'].rank(pct=True) * 99.9
@@ -111,15 +115,13 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
         ]
         
         if sum(cond) == 6:
-            # --- 產業分析代碼開始 ---
+            # --- 產業分析代碼：僅在符合 VCP 條件後執行，節省 API 額度 ---
             sector = "未知"
             try:
-                # 僅針對入選股票抓取行業，確保穩定性
                 t_info = yf.Ticker(ticker).info
-                sector = t_info.get('sector', '其他行業')
+                sector = t_info.get('sector', '其他/數據缺失')
             except:
                 pass
-            # --- 產業分析代碼結束 ---
 
             recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
             prev_range = (close.iloc[-25:-5].max() - close.iloc[-25:-5].min()) / close.iloc[-25:-5].min()
@@ -150,6 +152,7 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
     if res_tuple[0]:
         tickers, bench_code = res_tuple
         
+        # 大盤溫度計
         try:
             bench_df = yf.download(bench_code, period="1y", progress=False, auto_adjust=True)
             b_series = bench_df['Close'][bench_code] if isinstance(bench_df.columns, pd.MultiIndex) else bench_df['Close']
@@ -170,25 +173,25 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
         pb = st.progress(0)
         for i, t in enumerate(tickers):
             res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
-            if res and res[3] >= min_sctr_val: results.append(res)
+            # 判斷 SCTR 是否達標
+            if res and res[3] >= min_sctr_val: 
+                results.append(res)
             pb.progress((i + 1) / len(tickers))
 
         if results:
-            # 這裡加入了 "行業" 欄位
+            # 欄位中增加了 "行業"
             df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態", "行業"])
             
-            # --- 產業分布統計功能開始 ---
-            st.subheader("🔥 資金流向：產業熱點統計 (Sector Analysis)")
-            sector_counts = df['行業'].value_counts()
-            col_chart, col_stat = st.columns([2, 1])
+            # --- 產業熱點視覺化 ---
+            st.subheader("🔥 產業資金流向分析")
+            sector_stats = df['行業'].value_counts()
+            col_chart, col_data = st.columns([2, 1])
             with col_chart:
-                st.bar_chart(sector_counts)
-            with col_stat:
-                st.write("**當前熱點行業佔比：**")
-                st.dataframe(sector_counts, use_container_width=True)
+                st.bar_chart(sector_stats)
+            with col_data:
+                st.dataframe(sector_stats, use_container_width=True)
             st.write("---")
-            # --- 產業分布統計功能結束 ---
-            
+
             def make_link(t):
                 t_str = str(t)
                 if ".HK" in t_str:
@@ -203,6 +206,6 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
             
             df['圖表'] = df['代碼'].apply(make_link)
             st.dataframe(df.sort_values("SCTR排名", ascending=False), column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, use_container_width=True)
-            st.success(f"完成！找到 {len(df)} 隻標的。")
+            st.success(f"完成！找到 {len(df)} 隻符合條件的強勢標的。")
         else:
-            st.warning("無符合標的。請嘗試調低 SCTR 排名門檻。")
+            st.warning("當前過濾條件下無符合標的，請嘗試調低 SCTR 排名要求。")
