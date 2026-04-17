@@ -127,7 +127,7 @@ if st.sidebar.button("🚀 開始全自動掃描"):
     
     status_text.text("掃描完成！")
     
-   if results:
+    if results:
         # 1. 建立 DataFrame
         df_final = pd.DataFrame(results, columns=["代碼", "現價", "距離高點數值", "評分", "狀態"])
         
