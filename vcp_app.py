@@ -26,9 +26,26 @@ def get_stock_list(market):
         elif market == "美股 (Nasdaq 100)":
             url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
             response = requests.get(url, headers=headers)
-            # 同樣使用 io.StringIO
-            table = pd.read_html(io.StringIO(response.text))[4] 
-            return table['Symbol'].tolist()
+            # 讀取該頁面所有表格
+            tables = pd.read_html(io.StringIO(response.text))
+            
+            # 尋找含有 'Ticker' 或 'Symbol' 字眼的表格
+            df_nasdaq = None
+            for t in tables:
+                if 'Ticker' in t.columns:
+                    df_nasdaq = t
+                    ticker_col = 'Ticker'
+                    break
+                elif 'Symbol' in t.columns:
+                    df_nasdaq = t
+                    ticker_col = 'Symbol'
+                    break
+            
+            if df_nasdaq is not None:
+                return df_nasdaq[ticker_col].tolist()
+            else:
+                # 備案：如果 Wikipedia 格式大改，回傳幾個核心股確保程式不死掉
+                return ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA"]
             
         elif market == "港股 (恒生指數)":
             return ["0700.HK", "9988.HK", "3690.HK", "1211.HK", "1810.HK", "2318.HK", "0005.HK", "0388.HK", "9618.HK", "2269.HK"]
