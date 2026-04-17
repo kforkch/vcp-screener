@@ -26,12 +26,26 @@ def get_stock_list(market):
                 if 'Ticker' in t.columns: return t['Ticker'].tolist(), "^IXIC"
                 if 'Symbol' in t.columns: return t['Symbol'].tolist(), "^IXIC"
         elif market == "港股 (恒生指數)":
-            # 港股核心成份股
-            return ["0700.HK", "9988.HK", "3690.HK", "1211.HK", "1810.HK", "2318.HK", "0005.HK", "0388.HK", "9618.HK", "2269.HK", "0941.HK", "0939.HK", "1299.HK"], "^HSI"
-    except: 
+            # 完整的恆生指數成份股清單 (共 82 隻)
+            hsi_list = [
+                "0001.HK", "0002.HK", "0003.HK", "0005.HK", "0006.HK", "0011.HK", "0012.HK", "0016.HK", 
+                "0017.HK", "0020.HK", "0027.HK", "0066.HK", "0101.HK", "0175.HK", "0241.HK", "0267.HK", 
+                "0288.HK", "0291.HK", "0316.HK", "0322.HK", "0386.HK", "0388.HK", "0669.HK", "0688.HK", 
+                "0700.HK", "0762.HK", "0823.HK", "0857.HK", "0868.HK", "0881.HK", "0883.HK", "0939.HK", 
+                "0941.HK", "0960.HK", "0968.HK", "0981.HK", "0992.HK", "1038.HK", "1044.HK", "1088.HK", 
+                "1093.HK", "1109.HK", "1113.HK", "1177.HK", "1211.HK", "1299.HK", "1313.HK", "1378.HK", 
+                "1398.HK", "1810.HK", "1876.HK", "1928.HK", "1929.HK", "2020.HK", "2269.HK", "2313.HK", 
+                "2318.HK", "2319.HK", "2331.HK", "2382.HK", "2388.HK", "2628.HK", "2688.HK", "3690.HK", 
+                "3692.HK", "3968.HK", "3988.HK", "6098.HK", "6608.HK", "6618.HK", "6690.HK", "6862.HK", 
+                "9618.HK", "9633.HK", "9868.HK", "9888.HK", "9922.HK", "9961.HK", "9988.HK", "9992.HK", "9999.HK"
+            ]
+            return hsi_list, "^HSI"
+            
+    except Exception as e:
+        st.error(f"獲取名單失敗: {e}")
         return [], None
+    
     return [], None
-
 # --- 2. SCTR 排名計算 (加入防錯機制) ---
 def calculate_sctr_ranks(tickers):
     try:
