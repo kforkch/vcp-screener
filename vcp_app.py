@@ -166,7 +166,7 @@ if st.sidebar.button("🚀 開始全自動掃描"):
         def get_tv_url(ticker):
             if ".HK" in ticker:
                 code = ticker.replace('.HK', '')
-                return f"https://www.tradingview.com/chart/?symbol=HKG:{code}"
+                return f"https://www.tradingview.com/chart/?symbol=HKG{code}"
             else:
                 return f"https://www.tradingview.com/chart/?symbol={ticker.replace('.', '-')}"
 
