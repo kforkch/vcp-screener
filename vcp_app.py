@@ -5,7 +5,9 @@ import pandas_ta as ta
 import requests
 import io
 import numpy as np
+import akshare as ak 
 from supabase import create_client
+
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
@@ -57,6 +59,32 @@ def get_stock_list(market):
         return [], None
     except: return [], None
 
+# --- 新增：數據中繼適配器 ---
+def fetch_data_adapter(ticker):
+    """自動判斷市場並返回統一格式的 DataFrame"""
+    # 處理 A 股
+    if ".SS" in ticker or ".SZ" in ticker:
+        try:
+            code = ticker.split('.')[0]
+            # 獲取歷史數據
+            df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date="20230101", end_date="20500101")
+            
+            # 將 Akshare 欄位對齊到 yfinance 的標準
+            df = df.rename(columns={
+                '日期': 'Date', '開盤': 'Open', '最高': 'High', 
+                '最低': 'Low', '收盤': 'Close', '成交量': 'Volume'
+            })
+            df['Date'] = pd.to_datetime(df['Date'])
+            df.set_index('Date', inplace=True)
+            return df
+        except: 
+            return pd.DataFrame() 
+
+    # 處理美股/港股
+    else:
+        return yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+
+
 # --- 4. SCTR 排名計算 ---
 def calculate_sctr_ranks(tickers):
     try:
@@ -80,7 +108,8 @@ def calculate_sctr_ranks(tickers):
 # --- 5. 核心篩選 ---
 def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
     try:
-        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+        df = fetch_data_adapter(ticker)
+        
         if df.empty or len(df) < 200: return None
         
         close = df['Close'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Close']
