@@ -1,6 +1,8 @@
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
+# 從 data_loader 匯入行業抓取函式
+from data_loader import get_sector_cached
 
 def calculate_sctr_ranks(tickers):
     try:
@@ -58,8 +60,13 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
             dist_high = round((1 - curr_p/high52) * 100, 2)
             vol_ratio = round(float(vol.iloc[-1]) / vol.rolling(20).mean().iloc[-1], 2)
             sctr_val = round(sctr_map.get(ticker, 0), 1)
+            
+            # 取得行業資訊
+            sector = get_sector_cached(ticker)
+            
             status = f"🔥 {b_days}D突破" if is_breakout else "🚀 強勢向上"
             
-            return [ticker, round(curr_p, 2), dist_high, sctr_val, is_tight, vol_ratio, status]
+            # 回傳列表最後增加 sector 資訊
+            return [ticker, round(curr_p, 2), dist_high, sctr_val, is_tight, vol_ratio, status, sector]
     except: return None
     return None
