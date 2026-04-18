@@ -5,11 +5,25 @@ import pandas_ta as ta
 import requests
 import io
 import numpy as np
-from supabase import create_client
+from supabase import create_client  # 1. 確保有這行 import
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
+
+# --- 2. Supabase 初始化 (放在配置之後) ---
+@st.cache_resource
+def get_supabase_client():
+    # 使用 .strip() 確保讀取到的字串沒有前後隱藏空格，這是解決 ascii 編碼錯誤的關鍵
+    url = str(st.secrets["SUPABASE_URL"]).strip()
+    key = str(st.secrets["SUPABASE_KEY"]).strip()
+    return create_client(url, key)
+
+supabase = get_supabase_client() # 初始化連線
+
 st.title("🏹 VCP Alpha 全球終極交易終端")
+
+# 接下來才是你原本的 get_stock_list 等函數定義...
+
 
 # --- Supabase 初始化 ---
 @st.cache_resource
