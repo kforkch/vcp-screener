@@ -56,3 +56,14 @@ def get_stock_list(market):
     except Exception as e:
         return [], None
     return [], None
+
+@st.cache_data(ttl=86400)
+def get_sector_cached(ticker):
+    """取得股票行業板塊，並快取 24 小時"""
+    try:
+        ticker_obj = yf.Ticker(ticker)
+        # 獲取 info 資料
+        info = ticker_obj.info
+        return info.get('sector', 'N/A')
+    except:
+        return 'N/A'
