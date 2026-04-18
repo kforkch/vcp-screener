@@ -52,9 +52,9 @@ def run_global_scan():
         
         # 進行掃描
         for t in tickers:
-            # 這裡設定篩選條件 (例如 SCTR > 70, 突破檢測 20 天)
+            # 這裡設定篩選條件 (例如 SCTR > 80, 突破檢測 20 天)
             res = check_vcp_advanced(t, sctr_map, b_only=False, b_days=20)
-            if res and res[3] >= 70.0:
+            if res and res[3] >= 80.0:
                 results.append(res)
         
         # 按 SCTR 排名排序 (索引 3 是 SCTR)
