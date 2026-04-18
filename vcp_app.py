@@ -7,6 +7,30 @@ import io
 import numpy as np
 from supabase import create_client  # 1. 確保有這行 import
 
+# --- 診斷測試：只執行一次 ---
+import streamlit as st
+from supabase import create_client
+
+# 測試區塊
+try:
+    url = st.secrets.get("SUPABASE_URL")
+    key = st.secrets.get("SUPABASE_KEY")
+    
+    st.write("--- 診斷測試開始 ---")
+    st.write(f"URL 讀取狀況: {'成功' if url else '失敗'}")
+    st.write(f"KEY 讀取狀況: {'成功' if key else '失敗'}")
+    
+    if url and key:
+        client = create_client(url.strip(), key.strip())
+        # 嘗試讀取一個空清單來確認連線 (不會影響資料)
+        res = client.table("stock_analysis").select("*").limit(1).execute()
+        st.write("✅ Supabase 連線測試成功！")
+except Exception as e:
+    st.error(f"❌ 診斷失敗: {e}")
+st.write("--- 診斷測試結束 ---")
+# ---------------------------
+
+
 # --- 頁面配置 ---
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
 
