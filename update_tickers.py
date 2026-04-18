@@ -1,51 +1,61 @@
 import pandas as pd
 import requests
-import os
 import io
+import os
 
-def fetch_hsi():
-    # 這是恒生指數成分股的 Wikipedia 網址
+def get_hsi_tickers():
+    """從 Wikipedia 抓取恒生指數成分股"""
     url = "https://en.wikipedia.org/wiki/Hang_Seng_Index"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        tables = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))
-        # 通常表格在第二個或特定索引，需視網頁結構而定，這裡假設為第一個包含 'Ticker' 的表格
+        response = requests.get(url, headers=headers)
+        tables = pd.read_html(io.StringIO(response.text))
+        # 尋找包含成分股的表格 (通常是包含 'Ticker' 或 'Code' 的表格)
         for table in tables:
             if 'Ticker' in table.columns:
-                # 假設表格內的 Ticker 是數字 (如 0001)，需補上 .HK
-                return (table['Ticker'].astype(str).str.zfill(4) + ".HK").tolist()
+                # 確保格式為 0001.HK
+                tickers = table['Ticker'].astype(str).str.zfill(4) + ".HK"
+                return tickers.tolist()
     except Exception as e:
-        print(f"抓取恒生指數失敗: {e}")
+        print(f"Error fetching HSI: {e}")
     return []
 
-def fetch_csi300():
-    # 這是滬深 300 的 Wikipedia 網址
+def get_csi300_tickers():
+    """從 Wikipedia 抓取滬深 300 成分股"""
     url = "https://en.wikipedia.org/wiki/CSI_300_Index"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        tables = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))
+        response = requests.get(url, headers=headers)
+        tables = pd.read_html(io.StringIO(response.text))
         for table in tables:
-            # 滬深 300 表格通常有 'Ticker' 欄位
             if 'Ticker' in table.columns:
-                return table['Ticker'].astype(str).apply(lambda x: f"{x.zfill(6)}.SS" if x.startswith('6') else f"{x.zfill(6)}.SZ").tolist()
+                # 滬深 300 代碼格式處理 (6開頭為 SS, 0/3開頭為 SZ)
+                def format_ticker(t):
+                    t = str(t).zfill(6)
+                    return f"{t}.SS" if t.startswith('6') else f"{t}.SZ"
+                return table['Ticker'].apply(format_ticker).tolist()
     except Exception as e:
-        print(f"抓取滬深 300 失敗: {e}")
+        print(f"Error fetching CSI300: {e}")
     return []
 
-# 執行抓取
-hsi_tickers = fetch_hsi()
-csi_tickers = fetch_csi300()
+def main():
+    # 確保 data 目錄存在
+    os.makedirs('data', exist_ok=True)
+    
+    # 執行抓取
+    hsi = get_hsi_tickers()
+    csi300 = get_csi300_tickers()
+    
+    # 寫入檔案 (如果抓到資料才更新)
+    if hsi:
+        with open('data/hsi.txt', 'w', encoding='utf-8') as f:
+            f.write("\n".join(hsi))
+        print(f"成功寫入 {len(hsi)} 個 HSI 股票代碼")
+        
+    if csi300:
+        with open('data/csi300.txt', 'w', encoding='utf-8') as f:
+            f.write("\n".join(csi300))
+        print(f"成功寫入 {len(csi300)} 個 CSI300 股票代碼")
 
-# 確保資料夾存在
-os.makedirs('data', exist_ok=True)
-
-# 寫入檔案
-if hsi_tickers:
-    with open('data/hsi.txt', 'w', encoding='utf-8') as f:
-        f.write("\n".join(hsi_tickers))
-    print(f"已更新 HSI: {len(hsi_tickers)} 檔")
-
-if csi_tickers:
-    with open('data/csi300.txt', 'w', encoding='utf-8') as f:
-        f.write("\n".join(csi_tickers))
-    print(f"已更新 CSI300: {len(csi_tickers)} 檔")
+if __name__ == "__main__":
+    main()
