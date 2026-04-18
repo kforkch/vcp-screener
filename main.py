@@ -7,6 +7,32 @@ from analyzer import calculate_sctr_ranks, check_vcp_advanced
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
 st.title("🏹 VCP Alpha 全球終極交易終端")
 
+# 連結生成邏輯
+def make_web_link(t):
+    t_str = str(t)
+    if ".HK" in t_str:
+        code = t_str.replace('.HK', '').lstrip('0')
+        return f"https://www.tradingview.com/chart/?symbol=HKEX:{code}"
+    elif ".SS" in t_str or ".SZ" in t_str:
+        code = t_str.split('.')[0]
+        prefix = "SSE" if ".SS" in t_str else "SZSE"
+        return f"https://www.tradingview.com/chart/?symbol={prefix}:{code}"
+    else:
+        return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
+
+def make_app_link(t):
+    t_str = str(t)
+    if ".HK" in t_str:
+        code = t_str.replace('.HK', '').lstrip('0')
+        return f"tradingview://chart?symbol=HKEX:{code}"
+    elif ".SS" in t_str:
+        return f"tradingview://chart?symbol=SSE:{t_str.split('.')[0]}"
+    elif ".SZ" in t_str:
+        return f"tradingview://chart?symbol=SZSE:{t_str.split('.')[0]}"
+    else:
+        return f"tradingview://chart?symbol={t_str.replace('.', '-')}"
+
+# 側邊欄參數
 st.sidebar.header("🎛️ 系統參數")
 market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)", "中國 A 股 (滬深 300 龍頭)"])
 min_sctr_val = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 80.0)
@@ -14,10 +40,10 @@ b_days = st.sidebar.selectbox("突破檢測天數", [10, 20, 50], index=1)
 only_b = st.sidebar.checkbox("僅看突破", value=False)
 
 if st.sidebar.button("🚀 執行全球同步掃描"):
-    res_tuple = get_stock_list(market_name)
-    if res_tuple[0]:
-        tickers, bench_code = res_tuple
-        
+    tickers, bench_code = get_stock_list(market_name)
+    
+    if tickers:
+        # 大盤分析
         try:
             bench_df = yf.download(bench_code, period="1y", progress=False, auto_adjust=True)
             b_series = bench_df['Close'][bench_code] if isinstance(bench_df.columns, pd.MultiIndex) else bench_df['Close']
@@ -42,27 +68,21 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
             pb.progress((i + 1) / len(tickers))
 
         if results:
-            # 更新 DataFrame 欄位，加入「行業」
             df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態", "行業"])
             
-            def make_link(t):
-                t_str = str(t)
-                if ".HK" in t_str:
-                    code = t_str.replace('.HK', '').lstrip('0')
-                    return f"https://www.tradingview.com/chart/?symbol=HKEX:{code}"
-                elif ".SS" in t_str or ".SZ" in t_str:
-                    code = t_str.split('.')[0]
-                    prefix = "SSE" if ".SS" in t_str else "SZSE"
-                    return f"https://www.tradingview.com/chart/?symbol={prefix}:{code}"
-                else:
-                    return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
+            # 產生兩種連結欄位
+            df['網頁'] = df['代碼'].apply(make_web_link)
+            df['App'] = df['代碼'].apply(make_app_link)
             
-            df['圖表'] = df['代碼'].apply(make_link)
             df_sorted = df.sort_values("SCTR排名", ascending=False)
+            
             st.dataframe(
                 df_sorted, 
-                column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, 
+                column_config={
+                    "網頁": st.column_config.LinkColumn("Web", display_text="Open"),
+                    "App": st.column_config.LinkColumn("App", display_text="📱 App")
+                }, 
                 use_container_width=True,
                 hide_index=True
             )
-            st.success(f"掃描完成！在 {len(tickers)} 隻股票中找到 {len(df)} 隻符合條件。")
+            st.success(f"掃描完成！找到 {len(df)} 隻符合條件股票。")
