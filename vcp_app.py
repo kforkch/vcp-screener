@@ -76,18 +76,24 @@ with tab1:
 with tab2:
     market_name = st.selectbox("選擇市場", ["美股 (S&P 500)"])
     
-    if st.button("🚀 開始掃描"):
-        tickers = get_stock_list(market_name)[:20] # 測試前 20 支
+    # 在 tab2 的掃描邏輯區塊中
+    if st.button("🚀 開始掃描 (測試模式)"):
+        tickers, _ = get_stock_list(market_name)
         results = []
-        bar = st.progress(0)
         
-        for i, t in enumerate(tickers):
-            res = check_vcp_advanced(t)
-            if res: results.append(res)
-            bar.progress((i + 1) / len(tickers))
-        
-        if results:
-            df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "狀態"])
+        # 為了除錯，我們只跑前 10 支觀察狀況
+        for t in tickers[:10]:
+            res = check_vcp_advanced(t) # 呼叫上面的函數
+            if res:
+                results.append(res)
+            else:
+                # 即使 check_vcp_advanced 回傳 None，我們也要知道原因
+                # 這裡簡單列出沒抓到資料的代碼
+                results.append([t, 0, 0, "⚠️ 無法計算/資料不足"])
+
+        df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "狀態"])
+        st.dataframe(df)
+
             
             # --- 智能圖表連結 ---
             def make_link(t):
