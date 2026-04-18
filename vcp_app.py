@@ -1,15 +1,13 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
 from supabase import create_client
 
-# --- 頁面配置 ---
+# --- 1. 頁面與連線初始化 ---
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
 
-# --- 核心：唯一初始化 Supabase (確保變數讀取乾淨) ---
 @st.cache_resource
 def get_supabase_client():
-    # 強制移除引號與前後空白，解決編碼錯誤
+    # 確保讀取出來的設定乾淨，去除所有引號與空白，避免連線錯誤
     url = str(st.secrets["SUPABASE_URL"]).strip().replace('"', '').replace("'", "")
     key = str(st.secrets["SUPABASE_KEY"]).strip().replace('"', '').replace("'", "")
     return create_client(url, key)
@@ -18,10 +16,14 @@ supabase = get_supabase_client()
 
 st.title("🏹 VCP Alpha 全球終極交易終端")
 
-# --- 核心函數：模擬掃描邏輯 ---
+# --- 2. 你的掃描演算法 ---
 def run_vcp_scan():
-    # 這裡放你原本的股票掃描篩選邏輯
-    # 產出的結果必須是一個 DataFrame，包含: ticker, price, sctr, sector, status
+    """
+    請將你原本的掃描演算法填寫在這裡。
+    這支函式必須回傳一個 DataFrame，且欄位名稱對應 Supabase 表格：
+    ticker, price, sctr, sector, status
+    """
+    # 範例模擬資料 (請替換為你的真實掃描邏輯)
     data = {
         "ticker": ["AAPL", "NVDA", "TSLA"],
         "price": [175.0, 850.0, 170.0],
@@ -31,17 +33,18 @@ def run_vcp_scan():
     }
     return pd.DataFrame(data)
 
-# --- UI 介面 ---
+# --- 3. UI 介面架構 ---
 tab1, tab2 = st.tabs(["☁️ 雲端每日看板", "🚀 即時掃描"])
 
 with tab1:
     st.subheader("雲端同步看板")
     if st.button("🔄 重新讀取雲端資料"):
         try:
-            # 從 Supabase 讀取數據
+            # 從 Supabase 抓取資料
             response = supabase.table("stock_analysis").select("*").execute()
             if response.data:
                 df = pd.DataFrame(response.data)
+                # 顯示資料表
                 st.dataframe(df, use_container_width=True)
             else:
                 st.info("資料庫目前為空。")
@@ -51,22 +54,25 @@ with tab1:
 with tab2:
     st.subheader("🚀 即時掃描器")
     
-    # 掃描按鈕
+    # 掃描邏輯
     if st.button("開始掃描"):
-        with st.spinner("正在進行 VCP 篩選..."):
+        with st.spinner("正在執行 VCP 篩選演算法..."):
             df_result = run_vcp_scan()
-            st.session_state['scan_result'] = df_result # 暫存結果
+            # 將掃描結果存入 session_state 以便後續同步
+            st.session_state['last_scan'] = df_result
             st.success("掃描完成！")
             st.dataframe(df_result)
 
-    # 如果有掃描結果，顯示同步按鈕
-    if 'scan_result' in st.session_state:
-        if st.button("💾 將結果同步至雲端看板"):
+    # 同步邏輯 (檢查是否有掃描結果)
+    if 'last_scan' in st.session_state:
+        if st.button("💾 將掃描結果同步至雲端看板"):
             try:
-                # 將 DataFrame 轉為 Supabase 可讀的格式
-                data_to_insert = st.session_state['scan_result'].to_dict(orient='records')
-                # 寫入資料庫
-                supabase.table("stock_analysis").insert(data_to_insert).execute()
-                st.success("✅ 資料已同步，請切換至「雲端每日看板」頁面查看。")
+                # 將 DataFrame 轉為字典清單格式
+                data_to_sync = st.session_state['last_scan'].to_dict(orient='records')
+                
+                # 使用 upsert，如果 Ticker 已存在則更新，不存在則新增
+                supabase.table("stock_analysis").upsert(data_to_sync).execute()
+                
+                st.success("✅ 同步成功！請切換至「雲端每日看板」查看最新狀態。")
             except Exception as e:
                 st.error(f"同步失敗: {e}")
