@@ -39,7 +39,6 @@ def get_stock_list(market):
             for t in tables:
                 if 'Ticker' in t.columns: return t['Ticker'].tolist(), "^IXIC"
         elif market == "港股 (恒生指數)":
-            # 簡化列表，確保連線測試
             hsi_list = ["0700.HK", "9988.HK", "2318.HK", "3690.HK", "1299.HK", "0941.HK", "0005.HK"]
             return hsi_list, "^HSI"
         return [], None
@@ -66,16 +65,14 @@ def calculate_sctr_ranks(tickers):
     except: return {}
 
 # --- 4. 核心篩選 ---
-def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
+def check_vcp_advanced(ticker, sctr_map):
     try:
         df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
         if df.empty or len(df) < 200: return None
         close = df['Close'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Close']
-        vol = df['Volume'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Volume']
         curr_p = float(close.iloc[-1])
-        sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
+        sma50, sma150 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1]
         
-        # VCP 篩選條件 (這裡放寬，確保掃得出來)
         if curr_p > sma50 and curr_p > sma150:
             recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
             is_tight = "緊湊" if recent_range < 0.05 else "鬆散"
@@ -88,12 +85,13 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
 # --- 5. UI 與同步邏輯 ---
 st.sidebar.header("🎛️ 設定")
 market_name = st.sidebar.selectbox("市場", ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)"])
+
 if st.button("🚀 開始掃描"):
     tickers, _ = get_stock_list(market_name)
     sctr_ranks = calculate_sctr_ranks(tickers)
     results = []
-    for t in tickers[:20]: # 測試前20支
-        res = check_vcp_advanced(t, sctr_ranks, False, 20)
+    for t in tickers[:20]:
+        res = check_vcp_advanced(t, sctr_ranks)
         if res: results.append(res)
     
     if results:
@@ -101,23 +99,26 @@ if st.button("🚀 開始掃描"):
         st.session_state['scan_result'] = df
         st.dataframe(df)
 
-# 【核心修正】：同步按鈕與欄位對應
+# 同步區塊：現在已放置在正確的邏輯位置
 if 'scan_result' in st.session_state:
+    st.markdown("---")
     if st.button("💾 將本次掃描結果同步至雲端看板"):
         if supabase:
             df = st.session_state['scan_result']
-            # 將 UI 的中文名稱對應到資料庫欄位名稱
+            # 精確的對應關係
             col_mapping = {
                 "代碼": "ticker",
                 "價格": "price",
                 "距離高點%": "dist_high",
-                "SCTR排名": "sctr_rank",
+                "SCTR排名": "sctr",        # 對應到資料庫欄位 sctr
                 "收縮狀態": "vol_state",
                 "量比": "vol_ratio",
                 "狀態": "status"
             }
+            
             df_to_sync = df.rename(columns=col_mapping)
             try:
+                # 執行 Upsert
                 supabase.table("stock_analysis").upsert(df_to_sync.to_dict(orient='records')).execute()
                 st.success("✅ 同步成功！")
             except Exception as e:
