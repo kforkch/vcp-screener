@@ -1,0 +1,34 @@
+name: Auto Update Tickers
+on:
+  schedule:
+    # 這是 cron 表達式，代表每月 1 號的凌晨 0 點執行
+    - cron: '0 0 1 * *' 
+  workflow_dispatch: # 允許你手動在 GitHub 網頁上點擊執行，方便測試
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必須開放寫入權限，才能更新 GitHub 上的 txt 檔
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install pandas lxml
+
+      - name: Run update script
+        run: python update_tickers.py
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name 'GitHub Action'
+          git config --global user.email 'action@github.com'
+          git add data/*.txt
+          # 檢查是否有變動，若無變動則不進行 Commit
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update stock tickers" && git push)
