@@ -1,69 +1,35 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
-import requests
-import io
-import numpy as np
-from supabase import create_client  # 1. 確保有這行 import
-
-# --- 診斷測試：只執行一次 ---
-import streamlit as st
+import yfinance as yf
 from supabase import create_client
-
-# 測試區塊
-try:
-    url = st.secrets.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_KEY")
-    
-    st.write("--- 診斷測試開始 ---")
-    st.write(f"URL 讀取狀況: {'成功' if url else '失敗'}")
-    st.write(f"KEY 讀取狀況: {'成功' if key else '失敗'}")
-    
-    if url and key:
-        client = create_client(url.strip(), key.strip())
-        # 嘗試讀取一個空清單來確認連線 (不會影響資料)
-        res = client.table("stock_analysis").select("*").limit(1).execute()
-        st.write("✅ Supabase 連線測試成功！")
-except Exception as e:
-    st.error(f"❌ 診斷失敗: {e}")
-st.write("--- 診斷測試結束 ---")
-# ---------------------------
-
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
 
-# --- 2. Supabase 初始化 (放在配置之後) ---
+# --- 核心：唯一初始化 Supabase (確保變數讀取乾淨) ---
 @st.cache_resource
 def get_supabase_client():
-    # 使用 .strip() 確保讀取到的字串沒有前後隱藏空格，這是解決 ascii 編碼錯誤的關鍵
-    url = str(st.secrets["SUPABASE_URL"]).strip()
-    key = str(st.secrets["SUPABASE_KEY"]).strip()
-    return create_client(url, key)
-
-supabase = get_supabase_client() # 初始化連線
-
-st.title("🏹 VCP Alpha 全球終極交易終端")
-
-# 接下來才是你原本的 get_stock_list 等函數定義...
-
-
-# --- Supabase 初始化 ---
-@st.cache_resource
-def get_supabase_client():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
+    # 強制移除引號與前後空白，解決編碼錯誤
+    url = str(st.secrets["SUPABASE_URL"]).strip().replace('"', '').replace("'", "")
+    key = str(st.secrets["SUPABASE_KEY"]).strip().replace('"', '').replace("'", "")
     return create_client(url, key)
 
 supabase = get_supabase_client()
 
-# --- 程式原本的函數 (保持不變) ---
-@st.cache_data(ttl=86400)
-def get_stock_list(market):
-    # ... (你的原 get_stock_list 程式碼) ...
-    pass 
-# [請保留你原本的 get_stock_list, calculate_sctr_ranks, check_vcp_advanced 函數]
+st.title("🏹 VCP Alpha 全球終極交易終端")
+
+# --- 核心函數：模擬掃描邏輯 ---
+def run_vcp_scan():
+    # 這裡放你原本的股票掃描篩選邏輯
+    # 產出的結果必須是一個 DataFrame，包含: ticker, price, sctr, sector, status
+    data = {
+        "ticker": ["AAPL", "NVDA", "TSLA"],
+        "price": [175.0, 850.0, 170.0],
+        "sctr": [88.5, 95.2, 72.1],
+        "sector": ["Tech", "Tech", "Auto"],
+        "status": ["VCP-Stage2", "VCP-Stage2", "VCP-Stage1"]
+    }
+    return pd.DataFrame(data)
 
 # --- UI 介面 ---
 tab1, tab2 = st.tabs(["☁️ 雲端每日看板", "🚀 即時掃描"])
@@ -74,8 +40,8 @@ with tab1:
         try:
             # 從 Supabase 讀取數據
             response = supabase.table("stock_analysis").select("*").execute()
-            df = pd.DataFrame(response.data)
-            if not df.empty:
+            if response.data:
+                df = pd.DataFrame(response.data)
                 st.dataframe(df, use_container_width=True)
             else:
                 st.info("資料庫目前為空。")
@@ -83,6 +49,24 @@ with tab1:
             st.error(f"讀取失敗: {e}")
 
 with tab2:
-    # --- 原有的掃描區塊 ---
-    # [將你原本在 st.sidebar 的所有邏輯搬移到這裡]
-    st.write("即時掃描功能已整合完畢...")
+    st.subheader("🚀 即時掃描器")
+    
+    # 掃描按鈕
+    if st.button("開始掃描"):
+        with st.spinner("正在進行 VCP 篩選..."):
+            df_result = run_vcp_scan()
+            st.session_state['scan_result'] = df_result # 暫存結果
+            st.success("掃描完成！")
+            st.dataframe(df_result)
+
+    # 如果有掃描結果，顯示同步按鈕
+    if 'scan_result' in st.session_state:
+        if st.button("💾 將結果同步至雲端看板"):
+            try:
+                # 將 DataFrame 轉為 Supabase 可讀的格式
+                data_to_insert = st.session_state['scan_result'].to_dict(orient='records')
+                # 寫入資料庫
+                supabase.table("stock_analysis").insert(data_to_insert).execute()
+                st.success("✅ 資料已同步，請切換至「雲端每日看板」頁面查看。")
+            except Exception as e:
+                st.error(f"同步失敗: {e}")
