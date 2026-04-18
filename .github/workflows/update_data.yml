@@ -20,7 +20,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install pandas lxml
+        run: pip install pandas lxml requests
 
       - name: Run update script
         run: python update_tickers.py
