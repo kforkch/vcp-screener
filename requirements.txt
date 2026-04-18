@@ -1,5 +1,7 @@
 streamlit
 yfinance
 pandas
-pandas-ta
-lxml
+pandas_ta
+requests
+supabase
+numpy
