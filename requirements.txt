@@ -3,7 +3,7 @@ yfinance
 pandas
 pandas_ta
 requests
-supabase
-numpy
 lxml
 beautifulsoup4
+numpy
+supabase
