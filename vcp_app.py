@@ -74,10 +74,27 @@ if start_scan:
         if res: results.append(res)
         pb.progress((i + 1) / 20)
     
-    if results:
+        if results:
         df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "收縮狀態", "量比", "狀態", "行業"])
+        
+        # --- 安全地加入 TradingView 連結 ---
+        def make_link(t):
+            t_str = str(t)
+            # 處理港股 (移除 .HK)
+            if ".HK" in t_str: return f"https://www.tradingview.com/chart/?symbol=HKEX:{t_str.replace('.HK', '').lstrip('0')}"
+            # 處理美股 (將 . 換成 -)
+            else: return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
+        
+        df['圖表'] = df['代碼'].apply(make_link)
+        
+        # 顯示時將圖表欄位設為可點擊連結
         st.session_state['scan_result'] = df
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(
+            df, 
+            column_config={"圖表": st.column_config.LinkColumn("查看圖表", display_text="Open")},
+            use_container_width=True
+        )
+
 
 # --- 6. 同步邏輯 ---
 if 'scan_result' in st.session_state:
