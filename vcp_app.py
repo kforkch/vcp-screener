@@ -75,7 +75,7 @@ if start_scan:
         pb.progress((i + 1) / 20)
     
         if results:
-        df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "收縮狀態", "量比", "狀態", "行業"])
+            df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "收縮狀態", "量比", "狀態", "行業"])
         
         # --- 安全地加入 TradingView 連結 ---
         def make_link(t):
