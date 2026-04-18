@@ -9,7 +9,7 @@ st.title("🏹 VCP Alpha 全球終極交易終端")
 
 st.sidebar.header("🎛️ 系統參數")
 market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)", "中國 A 股 (滬深 300 龍頭)"])
-min_sctr_val = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 70.0)
+min_sctr_val = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 80.0)
 b_days = st.sidebar.selectbox("突破檢測天數", [10, 20, 50], index=1)
 only_b = st.sidebar.checkbox("僅看突破", value=False)
 
