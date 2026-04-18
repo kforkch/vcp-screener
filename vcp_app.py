@@ -54,8 +54,13 @@ def check_vcp_advanced(ticker):
         
         # --- 篩選條件 (這裡設定為寬鬆模式) ---
         # 只要股價 > 50日線 且 距離高點 < 25% 就顯示
-        if curr_p > sma50 and dist_high < 25:
-            return [ticker, round(curr_p, 2), dist_high, "✅ 強勢"]
+                # --- 修改成這樣：放寬篩選，同時顯示失敗原因 ---
+        if curr_p > sma50:
+            return [ticker, round(curr_p, 2), dist_high, "✅ 符合：股價站上50日線"]
+        else:
+            # 如果還是空的，我們回傳一個「不合格」的狀態，看看是什麼情況
+            return [ticker, round(curr_p, 2), dist_high, "❌ 不符：股價在50日線下"]
+
     except: return None
     return None
 
