@@ -1,25 +1,82 @@
-def save_tickers_to_file(tickers, filename):
-    """確保每個代碼獨立佔一行，且過濾掉無效字串"""
-    file_path = os.path.join('data', filename)
-    with open(file_path, 'w', encoding='utf-8') as f:
-        for t in tickers:
-            cleaned_ticker = str(t).strip()
-            if cleaned_ticker and len(cleaned_ticker) > 2: # 過濾空值與異常簡短字串
-                f.write(f"{cleaned_ticker}\n")
+import pandas as pd
+import requests
+import io
+import os
+import re
+
+def clean_and_format_ticker(raw_val, market_type):
+    """
+    清洗並格式化代碼：
+    1. 使用 Regex 去除所有非數字字元 (例如 'SSE: 600519' -> '600519')
+    2. 根據市場類型補足位數並加上正確後綴
+    """
+    raw_str = str(raw_val)
+    # 只保留數字
+    digits = re.sub(r'\D', '', raw_str)
+    
+    if not digits:
+        return None
+
+    if market_type == 'HK':
+        # 港股：補齊 4 位數，加 .HK
+        return f"{digits.zfill(4)}.HK"
+    
+    elif market_type == 'CN':
+        # A股：補齊 6 位數，根據開頭決定 .SS 或 .SZ
+        digits = digits.zfill(6)
+        if digits.startswith('6'):
+            return f"{digits}.SS"
+        else:
+            return f"{digits}.SZ"
+    
+    return None
+
+def get_hsi_tickers():
+    url = "https://en.wikipedia.org/wiki/Hang_Seng_Index"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, headers=headers)
+        tables = pd.read_html(io.StringIO(response.text))
+        for table in tables:
+            # 嘗試找 'Ticker' 或 'Code' 欄位
+            target_col = 'Ticker' if 'Ticker' in table.columns else 'Code'
+            if target_col in table.columns:
+                results = [clean_and_format_ticker(t, 'HK') for t in table[target_col]]
+                return [r for r in results if r]
+    except Exception as e:
+        print(f"Error fetching HSI: {e}")
+    return []
+
+def get_csi300_tickers():
+    url = "https://en.wikipedia.org/wiki/CSI_300_Index"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, headers=headers)
+        tables = pd.read_html(io.StringIO(response.text))
+        for table in tables:
+            target_col = 'Ticker' if 'Ticker' in table.columns else 'Code'
+            if target_col in table.columns:
+                results = [clean_and_format_ticker(t, 'CN') for t in table[target_col]]
+                return [r for r in results if r]
+    except Exception as e:
+        print(f"Error fetching CSI300: {e}")
+    return []
+
+def save_list_to_file(data_list, filepath):
+    # 去除重複值並排序
+    cleaned_data = sorted(list(set([d for d in data_list if d])))
+    if cleaned_data:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write("\n".join(cleaned_data))
+        print(f"成功更新 {filepath}: {len(cleaned_data)} 個代碼")
 
 def main():
-    # 確保 data 目錄存在
     os.makedirs('data', exist_ok=True)
-    
-    # 執行抓取
     hsi = get_hsi_tickers()
     csi300 = get_csi300_tickers()
     
-    # 分別寫入兩個獨立的檔案，絕對不混在一起
-    if hsi:
-        save_tickers_to_file(hsi, 'hsi.txt')
-        print(f"成功更新 HSI: {len(hsi)} 個代碼至 hsi.txt")
-        
-    if csi300:
-        save_tickers_to_file(csi300, 'csi300.txt')
-        print(f"成功更新 CSI300: {len(csi300)} 個代碼至 csi300.txt")
+    save_list_to_file(hsi, 'data/hsi.txt')
+    save_list_to_file(csi300, 'data/csi300.txt')
+
+if __name__ == "__main__":
+    main()
