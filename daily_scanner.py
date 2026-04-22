@@ -1,3 +1,4 @@
+# daily_scanner.py
 import os
 import requests
 from data_loader import get_stock_list
@@ -65,8 +66,8 @@ def run_global_scan():
             report += f"📊 <b>{market}</b> ({len(results)}檔，顯示前10檔):\n"
             for r in results[:10]:
                 link = make_link(r[0])
-                # r[0]: 代碼, r[1]: 價格, r[3]: SCTR, r[6]: 狀態
-                report += f"• <a href='{link}'>{r[0]}</a> | ${r[1]} | SCTR:{r[3]} | {r[6]}\n"
+                # r[0]:代碼, r[1]:價格, r[3]:SCTR, r[6]:狀態, r[8]:Pivot, r[9]:SL, r[10]:Target
+                report += f"• <a href='{link}'>{r[0]}</a> | ${r[1]} | 樞軸:${r[8]} | 停損:${r[9]} | SCTR:{r[3]} | {r[6]}\n"
             report += "\n"
     
     if found_any:
