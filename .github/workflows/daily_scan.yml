@@ -3,7 +3,7 @@ name: Daily Stock Scan
 # 觸發條件
 on:
   schedule:
-    - cron: '17 0 * * *' # 每天早上 08:30 (香港時間)
+    - cron: '17 0 * * *' # 每天早上 08:17 (香港時間)
   workflow_dispatch:      # 允許你在 GitHub 介面上手動「立即執行」按鈕
 
 jobs:
