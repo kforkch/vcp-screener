@@ -1,3 +1,4 @@
+# main.py
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -42,8 +43,11 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
             pb.progress((i + 1) / len(tickers))
 
         if results:
-            # 更新 DataFrame 欄位，加入「行業」
-            df = pd.DataFrame(results, columns=["代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態", "行業"])
+            # 更新 DataFrame 欄位，加入 Pivot, SL, Target
+            df = pd.DataFrame(results, columns=[
+                "代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態", "行業",
+                "Pivot(樞軸)", "SL(ATR停損)", "Target(目標3R)"
+            ])
             
             def make_link(t):
                 t_str = str(t)
