@@ -53,7 +53,7 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
             curr_p >= (low52 * 1.25), curr_p >= (high52 * 0.75)
         ]
         
-        if sum(cond) == 6:
+        if sum(cond) == 8:
             recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
             prev_range = (close.iloc[-25:-5].max() - close.iloc[-25:-5].min()) / close.iloc[-25:-5].min()
             is_tight = "✅ 緊湊" if recent_range < (prev_range * 0.5) else "❌ 鬆散"
