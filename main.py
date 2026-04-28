@@ -44,8 +44,8 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
         results = []
         pb = st.progress(0)
         
-        for i, t in enumerate(tickers):
-    res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
+    for i, t in enumerate(tickers):
+        res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
     
     # 【新增】獲取該股票的 RS 分數
     rs_val = rs_ranks.get(t, 0)
