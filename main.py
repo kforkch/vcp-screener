@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from data_loader import get_stock_list
-from analyzer import calculate_sctr_ranks, check_vcp_advanced, calculate_rs_rating
+from analyzer import calculate_sctr_ranks, check_vcp_advanced
 
 # 頁面設定
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
@@ -14,7 +14,6 @@ market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美�
 min_sctr_val = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 80.0)
 b_days = st.sidebar.selectbox("突破檢測天數", [10, 20, 50], index=1)
 only_b = st.sidebar.checkbox("僅看突破", value=False)
-min_rs_val = st.sidebar.slider("最低 RS Rating (超額報酬%)", -50.0, 50.0, 0.0, step=1.0)
 
 # 連結生成函數
 def make_link(t):
@@ -38,35 +37,25 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
         # 顯示進度條
         st.write(f"正在掃描 {market_name} ...")
         sctr_ranks = calculate_sctr_ranks(tickers)
-        benchmark_index = "^GSPC" if "美股" in market_name else "^HSI" 
-        
-        rs_ranks = calculate_rs_rating(tickers, market_index=benchmark_index)
         results = []
         pb = st.progress(0)
         
-        # 【修正】以下區塊縮排確保在迴圈內
         for i, t in enumerate(tickers):
             res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
-            rs_val = rs_ranks.get(t, 0)
-            
-            # 【關鍵過濾】同時符合 SCTR 與 RS 門檻
-            if res and res[3] >= min_sctr_val and rs_val >= min_rs_val:
-                res.append(rs_val)  # 將 RS 數值放入結果陣列
+            if res and res[3] >= min_sctr_val: 
                 results.append(res)
-                
             pb.progress((i + 1) / len(tickers))
 
-        # 【修正】此區塊在迴圈外，確保掃描完才產生結果
         if results:
-            # 建立 DataFrame (新增 "RS Rating" 欄位以匹配數據長度)
+            # 建立 DataFrame
             df = pd.DataFrame(results, columns=[
                 "代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態", "行業",
-                "Pivot(樞軸)", "SL(ATR停損)", "Target(目標3R)", "RS Rating"
+                "Pivot(樞軸)", "SL(ATR停損)", "Target(目標3R)"
             ])
             
             # 【優化】定義決策流欄位順序
             decision_order = [
-                "代碼", "行業", "RS Rating", "SCTR排名", "價格", 
+                "代碼", "行業", "SCTR排名", "價格", 
                 "Pivot(樞軸)", "SL(ATR停損)", "Target(目標3R)", 
                 "量比", "收縮狀態", "狀態", "距離高點%"
             ]
