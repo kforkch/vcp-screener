@@ -69,7 +69,7 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
         prev_range = (close.iloc[-25:-5].max() - close.iloc[-25:-5].min()) / close.iloc[-25:-5].min()
         
         # 判斷是否為緊湊型態 (VCP)
-        is_tight = (recent_range < (prev_range * 0.7))
+        is_tight = (recent_range < (prev_range * 0.5))
         
         # 成交量萎縮：確保近期量能小於 20 日平均，這是「安靜點」的關鍵
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
