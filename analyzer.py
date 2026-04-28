@@ -12,18 +12,19 @@ def calculate_rs_rating(tickers, market_index="^GSPC"):
 
     if data.empty:
         return {t: 0.0 for t in tickers}
-    # 計算大盤一年的漲幅 (ROC)
+    
+    # 計算大盤一年的漲幅 (ROC) - 使用第一天作為基準避免 out-of-bounds
     market_roc = (data[market_index].iloc[-1] / data[market_index].iloc[0] - 1)
     
     rs_ratings = {}
     for ticker in tickers:
         try:
-            # 計算個股一年漲幅
-            stock_roc = (data[ticker].iloc[-1] / data[ticker].iloc[0] - 1)
-            # 簡單的相對強弱：(個股表現 - 大盤表現)
-            # 你也可以進階用 (個股ROC / 大盤ROC)
-            rs_score = stock_roc - market_roc
-            rs_ratings[ticker] = round(rs_score * 100, 2)
+            # 【修正】檢查該股票是否在資料中，並正確套用 if-else 結構
+            if ticker in data.columns:
+                stock_roc = (data[ticker].iloc[-1] / data[ticker].iloc[0] - 1)
+                # 簡單的相對強弱：(個股表現 - 大盤表現)
+                rs_score = stock_roc - market_roc
+                rs_ratings[ticker] = round(rs_score * 100, 2)
             else:
                 rs_ratings[ticker] = 0.0
         except:
