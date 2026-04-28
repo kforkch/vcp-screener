@@ -66,7 +66,7 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
             
             # 【優化】定義決策流欄位順序
             decision_order = [
-                "代碼", "行業", "SCTR排名", "價格", 
+                "代碼", "行業", "RS Rating", "SCTR排名", "價格", 
                 "Pivot(樞軸)", "SL(ATR停損)", "Target(目標3R)", 
                 "量比", "收縮狀態", "狀態", "距離高點%"
             ]
