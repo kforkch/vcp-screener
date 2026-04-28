@@ -11,17 +11,19 @@ def calculate_rs_rating(tickers, market_index="^GSPC"):
     data = yf.download(all_tickers, period="1y", interval="1d", progress=False)['Close']
     
     # 計算大盤一年的漲幅 (ROC)
-    market_roc = (data[market_index].iloc[-1] / data[market_index].iloc[-252] - 1)
+    market_roc = (data[market_index].iloc[-1] / data[market_index].iloc[0] - 1)
     
     rs_ratings = {}
     for ticker in tickers:
         try:
             # 計算個股一年漲幅
-            stock_roc = (data[ticker].iloc[-1] / data[ticker].iloc[-252] - 1)
+            stock_roc = (data[ticker].iloc[-1] / data[ticker].iloc[0] - 1)
             # 簡單的相對強弱：(個股表現 - 大盤表現)
             # 你也可以進階用 (個股ROC / 大盤ROC)
             rs_score = stock_roc - market_roc
             rs_ratings[ticker] = round(rs_score * 100, 2)
+            else:
+                rs_ratings[ticker] = 0.0
         except:
             rs_ratings[ticker] = 0
     return rs_ratings
