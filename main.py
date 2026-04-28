@@ -57,7 +57,7 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
         
     pb.progress((i + 1) / len(tickers))
 
-        if results:
+    if results:
             # 建立 DataFrame
             df = pd.DataFrame(results, columns=[
                 "代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態", "行業",
