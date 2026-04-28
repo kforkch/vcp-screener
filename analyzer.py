@@ -56,7 +56,7 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
         if sum(cond) == 6:
             recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
             prev_range = (close.iloc[-25:-5].max() - close.iloc[-25:-5].min()) / close.iloc[-25:-5].min()
-            is_tight = "✅ 緊湊" if recent_range < (prev_range * 0.5) else "❌ 鬆散"
+            is_tight = "✅ 緊湊" if recent_range < (prev_range * 0.4) else "❌ 鬆散"
 
             # 【新增】成交量萎縮檢查 (Minervini 的安靜點核心)
             vol_ma20 = vol.rolling(20).mean().iloc[-1]
