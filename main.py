@@ -14,6 +14,7 @@ market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美�
 min_sctr_val = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 80.0)
 b_days = st.sidebar.selectbox("突破檢測天數", [10, 20, 50], index=1)
 only_b = st.sidebar.checkbox("僅看突破", value=False)
+min_rs_val = st.sidebar.slider("最低 RS Rating (超額報酬%)", -50.0, 50.0, 0.0, step=1.0)
 
 # 連結生成函數
 def make_link(t):
@@ -37,14 +38,24 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
         # 顯示進度條
         st.write(f"正在掃描 {market_name} ...")
         sctr_ranks = calculate_sctr_ranks(tickers)
+        benchmark_index = "^GSPC" if "美股" in market_name else "^HSI" 
+        
+        rs_ranks = calculate_rs_rating(tickers, market_index=benchmark_index)
         results = []
         pb = st.progress(0)
         
         for i, t in enumerate(tickers):
-            res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
-            if res and res[3] >= min_sctr_val: 
-                results.append(res)
-            pb.progress((i + 1) / len(tickers))
+    res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
+    
+    # 【新增】獲取該股票的 RS 分數
+    rs_val = rs_ranks.get(t, 0)
+    
+    # 【關鍵過濾】同時符合 SCTR 與 RS 門檻 (min_rs_val 需要在側邊欄定義)
+    if res and res[3] >= min_sctr_val and rs_val >= min_rs_val:
+        res.append(rs_val)  # 將 RS 數值放入結果陣列，後續才能顯示
+        results.append(res)
+        
+    pb.progress((i + 1) / len(tickers))
 
         if results:
             # 建立 DataFrame
