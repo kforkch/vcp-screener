@@ -25,7 +25,7 @@ def calculate_rs_rating(tickers, market_index="^GSPC"):
             else:
                 rs_ratings[ticker] = 0.0
         except:
-            rs_ratings[ticker] = 0
+            rs_ratings[ticker] = 0.0
     return rs_ratings
     
 def calculate_sctr_ranks(tickers):
