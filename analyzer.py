@@ -57,7 +57,11 @@ def check_vcp_advanced(ticker, sctr_map, b_only, b_days):
             recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
             prev_range = (close.iloc[-25:-5].max() - close.iloc[-25:-5].min()) / close.iloc[-25:-5].min()
             is_tight = "✅ 緊湊" if recent_range < (prev_range * 0.5) else "❌ 鬆散"
-            
+
+            # 【新增】成交量萎縮檢查 (Minervini 的安靜點核心)
+            vol_ma20 = vol.rolling(20).mean().iloc[-1]
+            if vol.iloc[-1] > vol_ma20: return None # 如果成交量大於平均，代表安靜點還沒到
+                
             recent_max = float(close.iloc[-(b_days+1):-1].max())
             is_breakout = curr_p > recent_max
             if b_only and not is_breakout: return None
