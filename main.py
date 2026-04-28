@@ -78,4 +78,4 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
         else:
             st.warning("今日未篩選出符合 VCP 高強度條件的標的。")
     else:
-        st.error("無法取得市場股
+        st.error("無法取得市場股票清單，請檢查網路連線。")
