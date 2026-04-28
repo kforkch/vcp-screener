@@ -9,7 +9,9 @@ def calculate_rs_rating(tickers, market_index="^GSPC"):
     # 下載目標清單與大盤數據
     all_tickers = tickers + [market_index]
     data = yf.download(all_tickers, period="1y", interval="1d", progress=False)['Close']
-    
+
+    if data.empty:
+        return {t: 0.0 for t in tickers}
     # 計算大盤一年的漲幅 (ROC)
     market_roc = (data[market_index].iloc[-1] / data[market_index].iloc[0] - 1)
     
