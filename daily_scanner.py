@@ -70,8 +70,8 @@ def run_global_scan():
         if results:
             found_any = True
             report += f"📊 <b>{market}</b> (篩選出 {len(results)} 檔)\n"
-            # 限制顯示前 5 檔，避免訊息過長
-            for r in results[:5]:
+            # 限制顯示前 10 檔，避免訊息過長
+            for r in results[:10]:
                 link = make_link(r[0])
                 # r[0]:代碼, r[1]:價格, r[3]:SCTR, r[6]:狀態, r[8]:Pivot, r[9]:SL, r[10]:Target, r[5]:量比
                 report += (
