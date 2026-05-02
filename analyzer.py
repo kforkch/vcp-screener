@@ -1,20 +1,15 @@
-# analyzer.py - 最終穩定版
+# analyzer.py - 簡潔穩定版
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import logging
 import time
-import os
 from data_loader import get_sector_cached
-
-# 解決 TzCache locked 問題
-os.environ['YF_tz_cache'] = '0'  # 禁用 tz cache
-yf.utils.get_tz_cache().clear()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def calculate_sctr_ranks(tickers, lookback=20, batch_size=20):
-    """保守版分批下載"""
+    """分批下載 SCTR"""
     sctr_current = []
     sctr_hist = []
     
@@ -27,18 +22,14 @@ def calculate_sctr_ranks(tickers, lookback=20, batch_size=20):
                 interval="1d", 
                 progress=False, 
                 auto_adjust=True,
-                threads=False,      # 改成 False 更穩定
+                threads=False,
                 timeout=30
             )
-            close = data['Close'] if isinstance(data, pd.DataFrame) and 'Close' in data.columns else data
+            close = data['Close'] if 'Close' in data.columns else data
             
             for ticker in batch:
                 try:
-                    if isinstance(close, pd.DataFrame):
-                        series = close[ticker].dropna()
-                    else:
-                        series = pd.Series(close).dropna()
-                    
+                    series = close[ticker].dropna() if isinstance(close, pd.DataFrame) else pd.Series(close).dropna()
                     if len(series) < 250:
                         continue
                     
@@ -58,11 +49,9 @@ def calculate_sctr_ranks(tickers, lookback=20, batch_size=20):
                     sctr_hist.append({'ticker': ticker, 'score': hist})
                 except:
                     continue
-                    
-            time.sleep(2.0)   # 增加等待時間
-            
+            time.sleep(2.0)
         except Exception as e:
-            logging.warning(f"Batch failed ({i}): {e}")
+            logging.warning(f"Batch failed: {e}")
             time.sleep(5)
     
     if not sctr_current:
@@ -78,6 +67,7 @@ def calculate_sctr_ranks(tickers, lookback=20, batch_size=20):
 
 
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only=False, b_days=20):
+    """VCP 檢測"""
     try:
         df = yf.download(ticker, period="1y", progress=False, auto_adjust=True, timeout=20)
         if df.empty or len(df) < 200:
@@ -122,7 +112,6 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only=False, b_days=20)
         
         recent_max = float(close.iloc[-(b_days + 1):-1].max())
         is_breakout = curr_p > recent_max * 1.005
-        
         if b_only and not is_breakout:
             return None
         
@@ -133,7 +122,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only=False, b_days=20)
         stop_loss = curr_p - 1.8 * float(atr) if not pd.isna(atr) else curr_p * 0.92
         target = curr_p + 3.0 * (curr_p - stop_loss)
         
-        dist_high = round((1 - curr_p / float(close.max())), 2) * 100
+        dist_high = round((1 - curr_p / float(close.max())) * 100, 2)
         vol_ratio = round(float(vol.iloc[-1]) / float(vol_ma20), 2)
         sector = get_sector_cached(ticker)
         quality = 88 if is_breakout and "極緊" in tightness else 72 if is_breakout else 55
