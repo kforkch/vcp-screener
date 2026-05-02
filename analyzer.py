@@ -1,24 +1,24 @@
-# analyzer.py - 升級版
+# analyzer.py - 修正版 (2026-05-03)
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
-import numpy as np
 import logging
 from data_loader import get_sector_cached
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def calculate_sctr_ranks(tickers, lookback=20):
-    """升級版 SCTR 計算"""
+    """SCTR 計算"""
     try:
-        data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True, threads=True)['Close']
+        data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True, threads=True)
+        close = data['Close'] if 'Close' in data.columns else data
         
         sctr_current = []
         sctr_hist = []
         
         for ticker in tickers:
             try:
-                series = data[ticker].dropna()
+                series = close[ticker].dropna() if isinstance(close, pd.DataFrame) else close.dropna()
                 if len(series) < 250:
                     continue
                 
@@ -30,7 +30,6 @@ def calculate_sctr_ranks(tickers, lookback=20):
                     dist200 = (s.iloc[-1] / s.rolling(200).mean().iloc[-1] - 1) * 100
                     dist50 = (s.iloc[-1] / s.rolling(50).mean().iloc[-1] - 1) * 100
                     rsi = ta.rsi(s, length=14).iloc[-1]
-                    
                     return (dist200 * 0.30 + roc125 * 0.30) + (dist50 * 0.20 + roc20 * 0.15) + (rsi * 0.05)
                 
                 curr_score = compute_raw_sctr(series)
@@ -46,7 +45,6 @@ def calculate_sctr_ranks(tickers, lookback=20):
         
         df_curr = pd.DataFrame(sctr_current)
         df_curr['sctr'] = df_curr['score'].rank(pct=True) * 99.9
-        
         df_hist = pd.DataFrame(sctr_hist)
         df_hist['sctr'] = df_hist['score'].rank(pct=True) * 99.9
         
@@ -59,19 +57,22 @@ def calculate_sctr_ranks(tickers, lookback=20):
 
 
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only=False, b_days=20):
-    """大幅升級的 VCP 檢測核心"""
+    """修正版 VCP 檢測 - 強化資料處理"""
     try:
-        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+        # 單獨下載一檔，避免 MultiIndex 問題
+        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True, threads=False)
         if df.empty or len(df) < 200:
             return None
             
-        close = df['Close']
-        high = df['High']
-        low = df['Low']
-        vol = df['Volume']
+        # 確保是單層 Series
+        close = df['Close'].squeeze()
+        high = df['High'].squeeze()
+        low = df['Low'].squeeze()
+        vol = df['Volume'].squeeze()
+        
         curr_p = float(close.iloc[-1])
         
-        # 趨勢模板（嚴格）
+        # 移動平均
         sma50 = ta.sma(close, 50).iloc[-1]
         sma150 = ta.sma(close, 150).iloc[-1]
         sma200 = ta.sma(close, 200).iloc[-1]
@@ -79,7 +80,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only=False, b_days=20)
         if not (curr_p > sma150 > sma200 and sma50 > sma150 and curr_p > sma50):
             return None
         
-        # VCP 結構檢測（升級版）
+        # VCP 結構檢測
         def range_ratio(s):
             if len(s) < 5:
                 return 1.0
@@ -88,28 +89,26 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only=False, b_days=20)
         t1 = range_ratio(close.iloc[-65:-35])
         t2 = range_ratio(close.iloc[-35:-12])
         t3 = range_ratio(close.iloc[-12:])
-        
         recent_tight = range_ratio(close.iloc[-8:])
         
-        is_vcp = (t1 > t2 > t3) and t3 < 0.085 and t2 < 0.16 and recent_tight < 0.07
-        
+        is_vcp = (t1 > t2 > t3) and t3 < 0.10 and recent_tight < 0.09
         if not is_vcp:
             return None
         
-        tightness = "✅ 極緊" if recent_tight < 0.04 else "✅ 緊湊"
+        tightness = "✅ 極緊" if recent_tight < 0.045 else "✅ 緊湊"
         
-        # 成交量條件
+        # 成交量
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
-        if vol.iloc[-1] > vol_ma20 * 1.35:
+        if vol.iloc[-1] > vol_ma20 * 1.8:
             return None
         
-        # SCTR 條件
+        # SCTR
         sctr_val = round(sctr_map.get(ticker, 0), 1)
         sctr_old = round(sctr_hist_map.get(ticker, 0), 1)
-        if sctr_val < 78 or (sctr_val - sctr_old) < 3:
+        if sctr_val < 72 or (sctr_val - sctr_old) < 1:
             return None
         
-        # 突破判斷
+        # 突破
         recent_max = float(close.iloc[-(b_days + 1):-1].max())
         is_breakout = curr_p > recent_max * 1.005
         
@@ -121,15 +120,14 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only=False, b_days=20)
         # 風險報酬
         atr = ta.atr(high, low, close, length=14).iloc[-1]
         pivot = recent_max
-        stop_loss = curr_p - 1.8 * atr
+        stop_loss = curr_p - 1.8 * float(atr) if not pd.isna(atr) else curr_p * 0.93
         target = curr_p + 3.2 * (curr_p - stop_loss)
         
         dist_high = round((1 - curr_p / close.max()) * 100, 2)
         vol_ratio = round(float(vol.iloc[-1] / vol_ma20), 2)
         sector = get_sector_cached(ticker)
         
-        # 品質分數
-        quality = 95 if is_breakout and "極緊" in tightness else 80 if is_breakout else 65
+        quality = 90 if is_breakout and "極緊" in tightness else 75 if is_breakout else 60
         
         return [
             ticker, round(curr_p, 2), dist_high, sctr_val, tightness,
