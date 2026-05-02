@@ -1,21 +1,23 @@
-# main.py - 優化欄位顯示版
 import streamlit as st
 import pandas as pd
+import yfinance as yf
 from data_loader import get_stock_list
 from analyzer import calculate_sctr_ranks, check_vcp_advanced
 
+# 頁面設定
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
-st.title("🏹 VCP Alpha 全球終極交易終端 v2.0")
+st.title("🏹 VCP Alpha 全球終極交易終端")
 
-st.sidebar.header("🎛️ 參數設定")
+# 側邊欄參數
+st.sidebar.header("🎛️ 系統參數")
 market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)", "中國 A 股 (滬深 300 龍頭)"])
-min_sctr = st.sidebar.slider("最低 SCTR", 0, 99, 68)
+min_sctr_val = st.sidebar.slider("最低 SCTR 排名", 0.0, 99.9, 80.0)
 b_days = st.sidebar.selectbox("突破檢測天數", [10, 20, 50], index=1)
-only_breakout = st.sidebar.checkbox("僅顯示突破", value=False)
-min_quality = st.sidebar.slider("最低品質分數", 50, 95, 55)
+only_b = st.sidebar.checkbox("僅看突破", value=False)
 
-def make_link(ticker):
-    t_str = str(ticker)
+# 連結生成函數
+def make_link(t):
+    t_str = str(t)
     if ".HK" in t_str:
         code = t_str.replace('.HK', '').lstrip('0')
         return f"https://www.tradingview.com/chart/?symbol=HKEX:{code}"
@@ -26,67 +28,54 @@ def make_link(ticker):
     else:
         return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
 
-
-if st.sidebar.button("🚀 開始掃描", type="primary"):
-    with st.spinner(f"正在掃描 {market_name} ..."):
-        tickers, _ = get_stock_list(market_name)
-        if not tickers:
-            st.error("無法取得股票清單")
-            st.stop()
+# 執行掃描邏輯
+if st.sidebar.button("🚀 執行全球同步掃描"):
+    res_tuple = get_stock_list(market_name)
+    if res_tuple[0]:
+        tickers, bench_code = res_tuple
         
-        sctr_map, sctr_hist = calculate_sctr_ranks(tickers)
+        # 顯示進度條
+        st.write(f"正在掃描 {market_name} ...")
+        sctr_ranks = calculate_sctr_ranks(tickers)
         results = []
         pb = st.progress(0)
         
         for i, t in enumerate(tickers):
-            res = check_vcp_advanced(t, sctr_map, sctr_hist, only_breakout, b_days)
-            if res and res[3] >= min_sctr and res[-1] >= min_quality:
+            res = check_vcp_advanced(t, sctr_ranks, only_b, b_days)
+            if res and res[3] >= min_sctr_val: 
                 results.append(res)
             pb.progress((i + 1) / len(tickers))
-        
+
         if results:
+            # 建立 DataFrame
             df = pd.DataFrame(results, columns=[
-                "代碼", "價格", "距離高點%", "SCTR", "收縮狀態", "量比",
-                "狀態", "行業", "Pivot", "SL", "Target", "品質分數"
+                "代碼", "價格", "距離高點%", "SCTR排名", "收縮狀態", "量比", "狀態", "行業",
+                "Pivot(樞軸)", "SL(ATR停損)", "Target(目標3R)"
             ])
             
-            # === 優化欄位順序（最重要的放前面）===
-            desired_order = [
-                "代碼", "圖表", "狀態", "SCTR", "品質分數", "價格", 
-                "距離高點%", "收縮狀態", "量比", "行業",
-                "Pivot", "SL", "Target"
+            # 【優化】定義決策流欄位順序
+            decision_order = [
+                "代碼", "行業", "SCTR排名", "價格", 
+                "Pivot(樞軸)", "SL(ATR停損)", "Target(目標3R)", 
+                "量比", "收縮狀態", "狀態", "距離高點%"
             ]
+            df = df[decision_order]
             
+            # 生成圖表連結
             df['圖表'] = df['代碼'].apply(make_link)
             
-            # 重新排列欄位
-            df = df[[col for col in desired_order if col in df.columns]]
+            # 依 SCTR 排序
+            df_sorted = df.sort_values("SCTR排名", ascending=False)
             
-            # 排序
-            df = df.sort_values(["品質分數", "SCTR"], ascending=False)
-            
-            st.success(f"✅ 找到 {len(df)} 檔符合條件的標的")
-            
-            # 美化顯示
+            # 顯示表格
             st.dataframe(
-                df,
-                column_config={
-                    "圖表": st.column_config.LinkColumn("📈 圖表", display_text="開啟 TradingView"),
-                    "SCTR": st.column_config.NumberColumn(format="%.1f"),
-                    "品質分數": st.column_config.NumberColumn(format="%d"),
-                    "價格": st.column_config.NumberColumn(format="%.2f"),
-                    "距離高點%": st.column_config.NumberColumn(format="%.1f%%"),
-                    "量比": st.column_config.NumberColumn(format="%.2f"),
-                    "Pivot": st.column_config.NumberColumn(format="%.2f"),
-                    "SL": st.column_config.NumberColumn(format="%.2f"),
-                    "Target": st.column_config.NumberColumn(format="%.2f"),
-                },
+                df_sorted, 
+                column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, 
                 use_container_width=True,
                 hide_index=True
             )
-            
-            # 額外統計
-            st.info(f"最高品質分數：{df['品質分數'].max()} | 平均 SCTR：{df['SCTR'].mean():.1f}")
-            
+            st.success(f"掃描完成！共找到 {len(df)} 檔符合條件的標的。")
         else:
-            st.warning("本次掃描未找到符合條件的標的，請嘗試放寬 SCTR 或品質分數門檻。")
+            st.warning("今日未篩選出符合 VCP 高強度條件的標的。")
+    else:
+        st.error("無法取得市場股票清單，請檢查網路連線。")
