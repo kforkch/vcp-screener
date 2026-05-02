@@ -1,4 +1,4 @@
-# main.py
+# main.py - 含 TradingView 連結版
 import streamlit as st
 import pandas as pd
 from data_loader import get_stock_list
@@ -9,10 +9,24 @@ st.title("🏹 VCP Alpha 全球終極交易終端 v2.0")
 
 st.sidebar.header("🎛️ 參數設定")
 market_name = st.sidebar.selectbox("選擇市場", ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)", "中國 A 股 (滬深 300 龍頭)"])
-min_sctr = st.sidebar.slider("最低 SCTR", 0, 99, 70)
+min_sctr = st.sidebar.slider("最低 SCTR", 0, 99, 68)
 b_days = st.sidebar.selectbox("突破檢測天數", [10, 20, 50], index=1)
 only_breakout = st.sidebar.checkbox("僅顯示突破", value=False)
-min_quality = st.sidebar.slider("最低品質分數", 50, 95, 65)
+min_quality = st.sidebar.slider("最低品質分數", 50, 95, 55)
+
+def make_link(ticker):
+    """產生 TradingView 連結"""
+    t_str = str(ticker)
+    if ".HK" in t_str:
+        code = t_str.replace('.HK', '').lstrip('0')
+        return f"https://www.tradingview.com/chart/?symbol=HKEX:{code}"
+    elif ".SS" in t_str or ".SZ" in t_str:
+        code = t_str.split('.')[0]
+        prefix = "SSE" if ".SS" in t_str else "SZSE"
+        return f"https://www.tradingview.com/chart/?symbol={prefix}:{code}"
+    else:
+        # 美股
+        return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
 
 if st.sidebar.button("🚀 開始掃描", type="primary"):
     with st.spinner(f"正在掃描 {market_name} ..."):
@@ -29,15 +43,28 @@ if st.sidebar.button("🚀 開始掃描", type="primary"):
             res = check_vcp_advanced(t, sctr_map, sctr_hist, only_breakout, b_days)
             if res and res[3] >= min_sctr and res[-1] >= min_quality:
                 results.append(res)
-            pb.progress((i+1)/len(tickers))
+            pb.progress((i + 1) / len(tickers))
         
         if results:
             df = pd.DataFrame(results, columns=[
                 "代碼","價格","距離高點%","SCTR","收縮狀態","量比",
                 "狀態","行業","Pivot","SL","Target","品質分數"
             ])
-            df = df.sort_values(["品質分數","SCTR"], ascending=False)
+            
+            # 加入 TradingView 連結
+            df['圖表'] = df['代碼'].apply(make_link)
+            
+            df = df.sort_values(["品質分數", "SCTR"], ascending=False)
+            
             st.success(f"找到 {len(df)} 檔符合條件的標的")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            st.dataframe(
+                df,
+                column_config={
+                    "圖表": st.column_config.LinkColumn("查看圖表", display_text="📈 TradingView")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
         else:
-            st.warning("本次掃描未找到符合條件的標的，請放寬條件或稍後再試")
+            st.warning("本次掃描未找到符合條件的標的，請放寬條件後再試")
