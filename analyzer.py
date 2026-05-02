@@ -1,34 +1,49 @@
-# analyzer.py
+# analyzer.py - 最終穩定版
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import logging
 import time
+import os
 from data_loader import get_sector_cached
+
+# 解決 TzCache locked 問題
+os.environ['YF_tz_cache'] = '0'  # 禁用 tz cache
+yf.utils.get_tz_cache().clear()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def calculate_sctr_ranks(tickers, lookback=20, batch_size=25):
-    """分批下載 SCTR，避免 Rate Limit"""
+def calculate_sctr_ranks(tickers, lookback=20, batch_size=20):
+    """保守版分批下載"""
     sctr_current = []
     sctr_hist = []
     
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i + batch_size]
         try:
-            data = yf.download(batch, period="1y", interval="1d", progress=False, 
-                             auto_adjust=True, threads=True)
-            close = data['Close'] if 'Close' in data.columns else data
+            data = yf.download(
+                batch, 
+                period="1y", 
+                interval="1d", 
+                progress=False, 
+                auto_adjust=True,
+                threads=False,      # 改成 False 更穩定
+                timeout=30
+            )
+            close = data['Close'] if isinstance(data, pd.DataFrame) and 'Close' in data.columns else data
             
             for ticker in batch:
                 try:
-                    series = close[ticker].dropna() if isinstance(close, pd.DataFrame) else pd.Series(close).dropna()
+                    if isinstance(close, pd.DataFrame):
+                        series = close[ticker].dropna()
+                    else:
+                        series = pd.Series(close).dropna()
+                    
                     if len(series) < 250:
                         continue
                     
                     def compute_raw_sctr(s):
-                        if len(s) < 200:
-                            return 0.0
+                        if len(s) < 200: return 0.0
                         roc125 = (s.iloc[-1] / s.iloc[-125] - 1) * 100
                         roc20 = (s.iloc[-1] / s.iloc[-20] - 1) * 100
                         dist200 = (s.iloc[-1] / s.rolling(200).mean().iloc[-1] - 1) * 100
@@ -36,17 +51,19 @@ def calculate_sctr_ranks(tickers, lookback=20, batch_size=25):
                         rsi = ta.rsi(s, length=14).iloc[-1]
                         return (dist200 * 0.30 + roc125 * 0.30) + (dist50 * 0.20 + roc20 * 0.15) + (rsi * 0.05)
                     
-                    curr_score = compute_raw_sctr(series)
-                    hist_score = compute_raw_sctr(series.iloc[:-lookback])
+                    curr = compute_raw_sctr(series)
+                    hist = compute_raw_sctr(series.iloc[:-lookback])
                     
-                    sctr_current.append({'ticker': ticker, 'score': curr_score})
-                    sctr_hist.append({'ticker': ticker, 'score': hist_score})
+                    sctr_current.append({'ticker': ticker, 'score': curr})
+                    sctr_hist.append({'ticker': ticker, 'score': hist})
                 except:
                     continue
-            time.sleep(1.2)  # 避免 Rate Limit
+                    
+            time.sleep(2.0)   # 增加等待時間
+            
         except Exception as e:
-            logging.warning(f"Batch {i} failed: {e}")
-            time.sleep(3)
+            logging.warning(f"Batch failed ({i}): {e}")
+            time.sleep(5)
     
     if not sctr_current:
         return {}, {}
@@ -61,9 +78,8 @@ def calculate_sctr_ranks(tickers, lookback=20, batch_size=25):
 
 
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only=False, b_days=20):
-    """VCP 檢測"""
     try:
-        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True, timeout=20)
         if df.empty or len(df) < 200:
             return None
             
@@ -90,22 +106,23 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only=False, b_days=20)
         t3 = range_ratio(close.iloc[-12:])
         recent_tight = range_ratio(close.iloc[-8:])
         
-        if not (t1 > t2 > t3 and t3 < 0.10 and recent_tight < 0.09):
+        if not (t1 > t2 > t3 and t3 < 0.11 and recent_tight < 0.095):
             return None
         
-        tightness = "✅ 極緊" if recent_tight < 0.045 else "✅ 緊湊"
+        tightness = "✅ 極緊" if recent_tight < 0.05 else "✅ 緊湊"
         
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
-        if vol.iloc[-1] > vol_ma20 * 1.8:
+        if float(vol.iloc[-1]) > float(vol_ma20) * 2.0:
             return None
         
         sctr_val = round(sctr_map.get(ticker, 0), 1)
         sctr_old = round(sctr_hist_map.get(ticker, 0), 1)
-        if sctr_val < 70 or (sctr_val - sctr_old) < 1:
+        if sctr_val < 68 or (sctr_val - sctr_old) < 0.5:
             return None
         
         recent_max = float(close.iloc[-(b_days + 1):-1].max())
         is_breakout = curr_p > recent_max * 1.005
+        
         if b_only and not is_breakout:
             return None
         
@@ -113,13 +130,13 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only=False, b_days=20)
         
         atr = ta.atr(high, low, close, length=14).iloc[-1]
         pivot = recent_max
-        stop_loss = curr_p - 1.8 * float(atr) if not pd.isna(atr) else curr_p * 0.93
-        target = curr_p + 3.2 * (curr_p - stop_loss)
+        stop_loss = curr_p - 1.8 * float(atr) if not pd.isna(atr) else curr_p * 0.92
+        target = curr_p + 3.0 * (curr_p - stop_loss)
         
-        dist_high = round((1 - curr_p / close.max()) * 100, 2)
-        vol_ratio = round(float(vol.iloc[-1] / vol_ma20), 2)
+        dist_high = round((1 - curr_p / float(close.max())), 2) * 100
+        vol_ratio = round(float(vol.iloc[-1]) / float(vol_ma20), 2)
         sector = get_sector_cached(ticker)
-        quality = 90 if is_breakout and "極緊" in tightness else 75 if is_breakout else 60
+        quality = 88 if is_breakout and "極緊" in tightness else 72 if is_breakout else 55
         
         return [ticker, round(curr_p, 2), dist_high, sctr_val, tightness,
                 vol_ratio, status, sector, round(pivot, 2), round(stop_loss, 2),
