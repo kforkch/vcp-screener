@@ -61,7 +61,6 @@ def send_telegram_file(file_path):
 
 def run_global_scan():
     """執行全市場掃描並整理報告與生成 Excel"""
-    # 1. 確保儲存目錄存在
     report_dir = "reports"
     if not os.path.exists(report_dir):
         os.makedirs(report_dir)
@@ -71,7 +70,6 @@ def run_global_scan():
     all_results = []
     found_any = False
     
-    # 定義欄位名稱
     columns = [
         "代碼", "價格", "距離高點%", "SCTR", "收縮狀態", "量比", "狀態", "行業", 
         "樞軸(Pivot)", "停損(SL)", "目標(Target)"
@@ -81,14 +79,14 @@ def run_global_scan():
         tickers, _ = get_stock_list(market)
         if not tickers: continue
         
-        sctr_map = calculate_sctr_ranks(tickers)
+        # 獲取當前與 20 天前的歷史 SCTR 對照表
+        sctr_map, sctr_hist_map = calculate_sctr_ranks(tickers, lookback=20)
         results = []
         
         for t in tickers:
-            res = check_vcp_advanced(t, sctr_map, b_only=False, b_days=20)
-            if res and res[3] >= 80.0:
+            res = check_vcp_advanced(t, sctr_map, sctr_hist_map, b_only=False, b_days=20)
+            if res:
                 results.append(res)
-                # 加入總表
                 all_results.append([market] + res)
         
         results.sort(key=lambda x: x[3], reverse=True)
@@ -98,10 +96,9 @@ def run_global_scan():
             report += f"📊 <b>{market}</b> (篩選出 {len(results)} 檔)\n"
             for r in results[:5]:
                 link = make_link(r[0])
-                report += f"• <b>{r[0]}</b> | <a href='{link}'>圖表</a> | SCTR: {r[3]}\n"
+                report += f"• <b>{r[0]}</b> | <a href='{link}'>圖表</a> | SCTR: {r[3]} ({r[6]})\n"
             report += "\n"
     
-    # 處理 Excel 生成與發送
     if found_any:
         df_full = pd.DataFrame(all_results, columns=["市場"] + columns)
         filename = f"vcp_report_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
@@ -109,14 +106,12 @@ def run_global_scan():
         
         df_full.to_excel(file_path, index=False)
         
-        # 先發送訊息通知，再發送檔案
         report += "📁 報告已生成，請參見下方附件。"
         send_telegram_alert(report)
         send_telegram_file(file_path)
-        
         print(f"✅ 報表 {file_path} 已發送")
     else:
-        send_telegram_alert("⚠️ 今日掃描：全球市場無符合 VCP 高強度條件的標的。")
+        send_telegram_alert("⚠️ 今日掃描：全球市場無符合 VCP 頂級收縮且 SCTR 攀升標的。")
 
 if __name__ == "__main__":
     run_global_scan()
