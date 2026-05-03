@@ -126,9 +126,9 @@ def _check_vcp_base(ticker, sctr_map, sctr_hist_map, b_only, b_days, mode='stric
         recent_min = close.iloc[-5:].min()
         recent_range = (recent_max - recent_min) / recent_min
         
-        if recent_range <= 0.06:
+        if recent_range <= 0.05:
             is_tight = "💎 極度緊湊"
-        elif recent_range <= 0.12:
+        elif recent_range <= 0.08:
             is_tight = "✅ 緊湊"
         else:
             return None
