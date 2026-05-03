@@ -90,7 +90,7 @@ def _check_vcp_base(ticker, sctr_map, sctr_hist_map, b_only, b_days, mode='stric
                 sma150 > sma200,
                 sma50 > sma150 and sma50 > sma200,
                 curr_p > sma50,
-                curr_p >= (low52 * 1.30),
+                curr_p >= (low52 * 1.25),
                 curr_p >= (high52 * 0.75)
             ]
             if sum(1 for c in cond if c) < 6: 
