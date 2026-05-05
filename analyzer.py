@@ -1,14 +1,13 @@
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days,
                        min_tightening=2, atr_ratio_threshold=0.78, roll_window=20):
     """
-    改進版 VCP 檢測器：滾動區間 + ATR 動態門檻
+    進階 VCP 掃描器 - 滾動區間 + ATR 動態門檻
     """
     try:
         df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
         if df.empty or len(df) < 200:
             return None
 
-        # 處理欄位
         close = df['Close'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Close']
         high = df['High'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['High']
         low = df['Low'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Low']
@@ -16,7 +15,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days,
 
         curr_p = float(close.iloc[-1])
 
-        # 1. Trend Template（保留不變）
+        # 1. Trend Template
         sma50 = ta.sma(close, 50).iloc[-1]
         sma150 = ta.sma(close, 150).iloc[-1]
         sma200 = ta.sma(close, 200).iloc[-1]
@@ -36,35 +35,34 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days,
         # 2. ATR 動態緊密度
         df['ATR14'] = ta.atr(high, low, close, length=14)
         df['ATR_ratio'] = df['ATR14'] / close
-        
         recent_atr = df['ATR_ratio'].tail(10).mean()
         hist_atr = df['ATR_ratio'].tail(60).mean()
         
         if recent_atr > hist_atr * atr_ratio_threshold:
             return None
 
-        # 3. 滾動區間收縮檢測（核心改進）
-        df['roll_range'] = high.rolling(window=roll_window, min_periods=10).max() - \
-                          low.rolling(window=roll_window, min_periods=10).min()
+        # 3. 滾動區間收縮檢測（核心）
+        df['roll_range'] = (high.rolling(window=roll_window, min_periods=10).max() - 
+                           low.rolling(window=roll_window, min_periods=10).min())
         
-        roll_ranges = df['roll_range'].dropna().tail(7).values  # 取最近7段觀察
+        roll_ranges = df['roll_range'].dropna().tail(7).values
 
         tightening_count = 0
         for i in range(1, len(roll_ranges)):
-            if roll_ranges[i] < roll_ranges[i-1] * 0.90:      # 收緊10%以上
+            if roll_ranges[i] < roll_ranges[i-1] * 0.90:   # 至少收緊10%
                 tightening_count += 1
 
         if tightening_count < min_tightening:
             return None
 
-        # 4. 最近5-10天極窄確認
+        # 4. 最近極窄確認
         recent_range = (close.iloc[-7:].max() - close.iloc[-7:].min()) / close.iloc[-7:].min()
         is_tight = "✅ 極緊" if recent_range < 0.06 else "⚠️ 尚可"
 
-        # 5. 成交量萎縮（改寬鬆一點）
+        # 5. 成交量
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
-        vol_ratio = float(vol.iloc[-1]) / vol_ma20 if vol_ma20 > 0 else 1
-        if vol_ratio > 1.3:          # 允許輕微放量，但不過度
+        vol_ratio = float(vol.iloc[-1]) / vol_ma20 if vol_ma20 > 0 else 1.0
+        if vol_ratio > 1.3:
             return None
 
         # 6. SCTR
@@ -73,13 +71,13 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days,
         if sctr_val < 80.0 or sctr_val <= sctr_hist:
             return None
 
-        # 7. 突破檢測
+        # 7. 突破
         recent_max = float(close.iloc[-(b_days + 1):-1].max())
         is_breakout = curr_p > recent_max
         if b_only and not is_breakout:
             return None
 
-        status = f"🔥 {b_days}D突破" if is_breakout else "🚀 強勢蓄勢"
+        status = f"🔥 {b_days}D突破" if is_breakout else "🚀 強勢向上"
 
         # 8. 風險報酬
         atr_val = float(df['ATR14'].iloc[-1])
@@ -88,10 +86,11 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days,
         target_price = curr_p + (3.0 * (curr_p - stop_loss))
 
         dist_high = round((1 - curr_p / high52) * 100, 2)
+
         sector = get_sector_cached(ticker)
 
         return [
-            ticker, round(curr_p, 2), dist_high, sctr_val, is_tight, 
+            ticker, round(curr_p, 2), dist_high, sctr_val, is_tight,
             round(vol_ratio, 2), status, sector,
             round(pivot_point, 2), round(stop_loss, 2), round(target_price, 2)
         ]
