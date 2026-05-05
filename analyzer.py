@@ -77,34 +77,38 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         ]
         if sum(cond) < 6: return None
         
-        # 2. VCP 滾動區間法 + ATR 多級動態門檻
-        # 滾動區間劃分：w4 (60-45天前) -> w3 (45-30天前) -> w2 (30-15天前) -> w1 (最近 15 天)
-        w4 = close.iloc[-60:-45]
-        w3 = close.iloc[-45:-30]
-        w2 = close.iloc[-30:-15]
-        w1 = close.iloc[-15:]
+        # 2. VCP 彈性多段波動收縮判斷（推薦版）
+        # 改用更多窗口，允許 2~5 段收縮，不強求固定4段
+        windows = [
+            close.iloc[-75:-50],   # 更早一段
+            close.iloc[-60:-40],
+            close.iloc[-45:-25],
+            close.iloc[-30:-15],
+            close.iloc[-20:-5],    # 接近最新但避開最後幾天
+            close.iloc[-15:]       # 最近15天
+        ]
         
-        windows = [w4, w3, w2, w1]
         ranges = []
         for w in windows:
-            if len(w) > 0:
-                # 計算該區間震幅百分比 (Max - Min) / Min
+            if len(w) >= 5:  # 至少要有5根K線才計算
                 r = (w.max() - w.min()) / w.min()
                 ranges.append(r)
             else:
-                ranges.append(0.25)  # 略微提高預設值
-                
-        # 【放寬重點】斜率條件放寬：允許輕微正斜率
-        if len(ranges) == 4:
-            x = np.array([0, 1, 2, 3])
-            y = np.array(ranges)
-            slope, _ = np.polyfit(x, y, 1)
-            
-            # 原版：slope >= 0 就排除
-            # 新放寬版：允許小幅正斜率（最高到 0.018）
-            if slope > 0.018:  
-                return None
-        else:
+                ranges.append(0.25)
+        
+        # 移除前面幾個可能不完整的區間，只取有效的 ranges
+        valid_ranges = [r for r in ranges if r > 0]
+        
+        if len(valid_ranges) < 2:
+            return None  # 至少要有2段才能判斷收縮
+        
+        # 計算整體趨勢斜率（越往後應該越小 = 負斜率越好）
+        x = np.arange(len(valid_ranges))
+        y = np.array(valid_ranges)
+        slope, _ = np.polyfit(x, y, 1)
+        
+        # 【大幅放寬】允許輕微正斜率，只要不是明顯擴張即可
+        if slope > 0.025:  
             return None
             
         # 計算 ATR(14)
