@@ -73,7 +73,7 @@ if st.sidebar.button("開始掃描"):
         results = []
         pb = st.progress(0)
         
-        # 2. 本地記憶體極速掃描，無網路延遲
+        # 2. 本地記憶體極速掃描，無網絡延遲
         for i, t in enumerate(tickers):
             try:
                 # 提取個股 DataFrame
