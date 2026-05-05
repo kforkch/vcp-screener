@@ -93,7 +93,8 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
                 r = (w.max() - w.min()) / w.min()
                 ranges.append(r)
             else:
-                ranges.append(0.45)
+                val = ranges[-1] if ranges else 0.25
+                ranges.append(val)
         
         valid_ranges = [r for r in ranges if r > 0]
         
