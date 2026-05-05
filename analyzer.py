@@ -89,7 +89,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         
         ranges = []
         for w in windows:
-            if len(w) >= 4:        # 進一步降低 K 線數要求
+            if len(w) >= 2:        # 進一步降低 K 線數要求
                 r = (w.max() - w.min()) / w.min()
                 ranges.append(r)
             else:
