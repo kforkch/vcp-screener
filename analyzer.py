@@ -133,7 +133,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         # 5. SCTR 持續攀升檢查
         sctr_val = round(sctr_map.get(ticker, 0), 1)
         sctr_hist = round(sctr_hist_map.get(ticker, 0), 1)
-        if sctr_val < 80.0 or sctr_val <= sctr_hist: return None
+        if sctr_val < 75.0 or sctr_val <= sctr_hist: return None
         
         # 6. 突破檢測
         recent_max = float(close.iloc[-(b_days+1):-1].max())
