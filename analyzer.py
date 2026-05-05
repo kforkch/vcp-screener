@@ -116,21 +116,17 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         atr_val = float(atr_series.iloc[-1]) if not atr_series.isna().iloc[-1] else (float(high.iloc[-1]) - float(low.iloc[-1]))
         
         # 最近 15 天 (w1) 的絕對價格震幅空間與百分比
-        w1_max = float(w1.max())
-        w1_min = float(w1.min())
-        w1_abs_range = w1_max - w1_min
-        w1_pct = ranges[-1]  # w1 震幅百分比
+        w1_abs_range = float(w1.max() - w1.min())
+        w1_pct = (w1.max() - w1.min()) / w1.min()
         
-        # 3. 緊湊程度分級邏輯 (Fuzzy Logic Grading)
-        if w1_abs_range <= 1.4 * atr_val and w1_pct <= 0.10:
+        if w1_abs_range <= 2.0 * atr_val and w1_pct <= 0.18:
             is_tight = "✅✅ 極緊"
-        elif w1_abs_range <= 1.8 * atr_val and w1_pct <= 0.13:
+        elif w1_abs_range <= 2.5 * atr_val and w1_pct <= 0.22:
             is_tight = "✅ 緊湊"
-        elif w1_abs_range <= 2.0 * atr_val and w1_pct <= 0.15:
+        elif w1_abs_range <= 3.0 * atr_val and w1_pct <= 0.28:
             is_tight = "🔸 尚可"
         else:
-            # 超過 15% 震幅或 2.0 倍 ATR 則判定不符合收縮標準，直接排除
-            return None
+            return None   # 超過這個還是排除
             
         # 4. 成交量萎縮檢查 (尋找量能乾枯 VUD)
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
