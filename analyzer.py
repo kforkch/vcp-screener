@@ -128,7 +128,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
             
         # 4. 成交量萎縮檢查 (尋找量能乾枯 VUD)
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
-        if vol.iloc[-1] > vol_ma20 * 1.1: return None
+        if vol.iloc[-1] > vol_ma20: return None
             
         # 5. SCTR 持續攀升檢查
         sctr_val = round(sctr_map.get(ticker, 0), 1)
