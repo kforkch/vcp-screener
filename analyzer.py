@@ -5,24 +5,34 @@ import pandas_ta as ta
 # 從 data_loader 匯入行業抓取函式
 from data_loader import get_sector_cached
 
-def calculate_sctr_ranks(tickers, lookback=20):
+def calculate_sctr_ranks(tickers, lookback=20, pre_downloaded_data=None):
     """
-    計算當前與 lookback 天前的 SCTR，用來衡量動能是否持續攀升
+    計算當前與 lookback 天前的 SCTR，支援傳入已預載的 DataFrame 減輕 API 負擔
     """
     try:
-        # 下載 1 年 + lookback 天的數據
-        raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
-        data = raw_data['Close'] if 'Close' in raw_data else raw_data
+        if pre_downloaded_data is not None:
+            data = pre_downloaded_data
+        else:
+            raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
+            data = raw_data['Close'] if 'Close' in raw_data else raw_data
         
         sctr_current = []
         sctr_historical = []
         
         for ticker in tickers:
             try:
-                series = data[ticker].dropna() if isinstance(data, pd.DataFrame) else data.dropna()
+                # 兼容處理 Multi-Index 與單一 Index 的 DataFrame 提取
+                if isinstance(data, pd.DataFrame):
+                    if ticker in data.columns:
+                        series = data[ticker].dropna()
+                    else:
+                        continue
+                else:
+                    series = data.dropna()
+                
                 if len(series) < 200 + lookback: continue
                 
-                # 輔助計算函數
+                # SCTR 核心計算
                 def get_sctr_raw(sub_series):
                     sma200, sma50 = sub_series.rolling(200).mean().iloc[-1], sub_series.rolling(50).mean().iloc[-1]
                     dist_200, dist_50 = (sub_series.iloc[-1]/sma200-1)*100, (sub_series.iloc[-1]/sma50-1)*100
@@ -30,7 +40,6 @@ def calculate_sctr_ranks(tickers, lookback=20):
                     rsi = ta.rsi(sub_series, length=14).iloc[-1]
                     return (dist_200*0.3 + roc125*0.3) + (dist_50*0.15 + roc20*0.15) + (rsi*0.1)
                 
-                # 計算最新與歷史的原始分數
                 raw_curr = get_sctr_raw(series)
                 raw_hist = get_sctr_raw(series.iloc[:-lookback])
                 
@@ -53,20 +62,20 @@ def calculate_sctr_ranks(tickers, lookback=20):
     except:
         return {}, {}
 
-def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
+def check_vcp_advanced_preloaded(ticker, ticker_df, sctr_map, sctr_hist_map, b_only, b_days):
     """
-    實戰進階 VCP 掃描器
-    - 採用滾動區間定位法 (Rolling Local Extremes) 來動態找出近期的波段收縮結構。
-    - 結合 ATR 動態波動門檻，防止牛熊市參數失效，精確捕捉 VUD (成交量乾涸) 的安靜點。
+    實戰進階 VCP 掃描器 (本地記憶體極速版)
+    直接分析傳入的個股本地 DataFrame，免除 yfinance API 重複存取
     """
     try:
-        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
-        if df.empty or len(df) < 200: return None
+        if ticker_df.empty or len(ticker_df) < 200: return None
         
-        close = df['Close'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Close']
-        high = df['High'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['High']
-        low = df['Low'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Low']
-        vol = df['Volume'][ticker] if isinstance(df.columns, pd.MultiIndex) else df['Volume']
+        close = ticker_df['Close'].dropna()
+        high = ticker_df['High'].dropna()
+        low = ticker_df['Low'].dropna()
+        vol = ticker_df['Volume'].dropna()
+        
+        if len(close) < 200: return None
         
         curr_p = float(close.iloc[-1])
         
@@ -84,14 +93,12 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         # 2. ATR 動態計算與波動基準
         atr_series = ta.atr(high, low, close, length=14)
         atr_val = float(atr_series.iloc[-1]) if not atr_series.isna().iloc[-1] else (float(high.iloc[-1]) - float(low.iloc[-1]))
-        atr_pct = atr_val / curr_p  # ATR 佔股價百分比 (最新波動度)
+        atr_pct = atr_val / curr_p  
         
         # 3. 滾動區間波動收縮演算法 (Rolling Window Extremes)
-        # 用滾動最大與最小值，尋找過去 60 天內真實存在的波段高低落差 (不採用死板的固定區間切割)
         roll_high = high.rolling(window=15, min_periods=1)
         roll_low = low.rolling(window=15, min_periods=1)
         
-        # 取出近期不同延遲窗口的收縮特徵
         t1_high = float(roll_high.max().iloc[-45])
         t1_low  = float(roll_low.min().iloc[-45])
         t1_contraction = (t1_high - t1_low) / t1_low if t1_low > 0 else 0.3
@@ -104,19 +111,17 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         t3_low  = float(roll_low.min().iloc[-5])
         t3_contraction = (t3_high - t3_low) / t3_low if t3_low > 0 else 0.1
         
-        # VCP 收縮演算法核心：
-        # 1. 波動幅度必須遞減 (T1 > T2 > T3)
-        # 2. 最終 T3 的收縮幅度必須「動態小於」 1.5 倍的 ATR% 波動門檻 (或極值 8% 限制，取較小者)，以確保波動極度收緊
+        # VCP 收縮核心邏輯
         dynamic_t3_threshold = min(0.08, atr_pct * 1.5)
         
         if not (t1_contraction > t2_contraction > t3_contraction and t3_contraction < dynamic_t3_threshold):
             return None
             
-        # 過去 5 天極窄收縮確認 (尋找最緊湊的 Pivot Area)
+        # 5 日極窄收緊確認
         recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
         is_tight = "✅ 緊湊" if recent_range < dynamic_t3_threshold else "❌ 鬆散"
 
-        # 4. 成交量乾涸度檢查 (馬克 VUD 邏輯：成交量必須萎縮至 20 日均量的 80% 以下)
+        # 4. 成交量乾涸度檢查 (VUD 籌碼安靜點：萎縮至 20 日均量的 80% 以下)
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
         if vol.iloc[-1] > vol_ma20 * 0.8: return None 
             
@@ -130,10 +135,9 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         is_breakout = curr_p > recent_max
         if b_only and not is_breakout: return None
         
-        # 狀態轉換邏輯
         status = f"🔥 {b_days}D突破" if is_breakout else "🚀 強勢向上"
         
-        # 7. 風險報酬計算 (以 Pivot Point 和動態 ATR 為停損)
+        # 7. 風險報酬計算
         pivot_point = recent_max  
         stop_loss = curr_p - (1.5 * atr_val)  
         target_price = curr_p + (3.0 * (curr_p - stop_loss)) 
@@ -148,5 +152,13 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
             round(pivot_point, 2), round(stop_loss, 2), round(target_price, 2)
         ]
     except Exception as e:
-        # 實戰不因單檔股票錯誤而中斷掃描
+        return None
+
+# 保留原有的 check_vcp_advanced 接口以防外部呼叫，其內部同樣升級為動態 ATR 核心
+def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
+    try:
+        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+        if df.empty: return None
+        return check_vcp_advanced_preloaded(ticker, df, sctr_map, sctr_hist_map, b_only, b_days)
+    except:
         return None
