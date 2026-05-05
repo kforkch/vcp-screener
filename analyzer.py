@@ -113,15 +113,15 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         atr_val = float(atr_series.iloc[-1]) if not atr_series.isna().iloc[-1] else (float(high.iloc[-1]) - float(low.iloc[-1]))
         
         # 最近 15 天 (w1) 的絕對價格震幅空間與百分比
-        w1 = close.iloc[-18:]   # 稍微拉長到18天
+        w1 = close.iloc[-20:]      # 拉長觀察窗口
         w1_abs_range = float(w1.max() - w1.min())
         w1_pct = (w1.max() - w1.min()) / w1.min() if w1.min() > 0 else 1
         
-        if w1_abs_range <= 3.0 * atr_val and w1_pct <= 0.28:
+        if w1_abs_range <= 4.0 * atr_val and w1_pct <= 0.40:
             is_tight = "✅✅ 極緊"
-        elif w1_abs_range <= 3.8 * atr_val and w1_pct <= 0.35:
+        elif w1_abs_range <= 5.0 * atr_val and w1_pct <= 0.50:
             is_tight = "✅ 緊湊"
-        elif w1_abs_range <= 4.5 * atr_val and w1_pct <= 0.42:
+        elif w1_abs_range <= 6.5 * atr_val and w1_pct <= 0.65:
             is_tight = "🔸 尚可"
         else:
             return None
