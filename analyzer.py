@@ -95,7 +95,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         is_contracting = all(x > y for x, y in zip(ranges, ranges[1:]))
         
         # 判定 B：末端必須極度緊縮 (最後一段波動率小於 8%)
-        is_tight = ranges[-1] < 0.08
+        is_tight = ranges[-1] < 0.10
         
         # 判定 C：斜率依然作為輔助檢查
         x = np.arange(len(ranges))
