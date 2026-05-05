@@ -105,7 +105,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         slope, _ = np.polyfit(x, y, 1)
         
         # 放寬後：允許輕微擴張，只要不超過0.025
-        if slope > 0.035:
+        if slope > 0.055:
             return None
             
         # 計算 ATR(14)
