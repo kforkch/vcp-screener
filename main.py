@@ -1,8 +1,9 @@
 # main.py
 import streamlit as st
 import pandas as pd
+import yfinance as yf
 from data_loader import get_stock_list
-from analyzer import calculate_sctr_ranks, check_vcp_advanced
+from analyzer import calculate_sctr_ranks, check_vcp_advanced_preloaded
 
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
 st.title("🏹 VCP Alpha 全球終極交易終端")
@@ -25,21 +26,71 @@ def make_link(t):
     else:
         return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
 
-if st.sidebar.button("🚀 執行全球同步掃描"):
-    res_tuple = get_stock_list(market_name)
-    if res_tuple[0]:
-        tickers, bench_code = res_tuple
+# 實戰精髓：利用 Streamlit Cache 機制在本地記憶體中快取批次下載的數據
+# ttl=14400 代表 4 小時之內，同一個市場的數據不需要重疊下載，滑動 Slider 時瞬間反應！
+@st.cache_data(show_spinner=False, ttl=14400)
+def fetch_market_data_cached(tickers):
+    """
+    一次性整批下載所有標的數據，對 Yahoo Finance 伺服器只發送一次請求，徹底根治 Rate Limit！
+    """
+    try:
+        # 下載歷史數據
+        df_raw = yf.download(tickers, period="1y", group_by="ticker", progress=False, auto_adjust=True)
+        return df_raw
+    except Exception as e:
+        return None
+
+if st.sidebar.button("開始掃描"):
+    tickers, bench_code = get_stock_list(market_name)
+    if tickers:
+        st.info(f"正在載入 {market_name} 數據 (共 {len(tickers)} 檔)... 首次載入約需 10-15 秒，隨後操作將瞬間完成 🛡️")
         
-        st.write(f"正在掃描 {market_name} ...")
-        # 獲取最新與歷史 SCTR
-        sctr_ranks, sctr_hist = calculate_sctr_ranks(tickers, lookback=20)
+        # 1. 記憶體快取批次下載
+        with st.spinner("正在與 Yahoo Finance 同步批次數據..."):
+            full_raw = fetch_market_data_cached(tickers)
+            
+        if full_raw is None or full_raw.empty:
+            st.error("數據同步失敗，請稍後再試。")
+            st.stop()
+            
+        # 整理下載後的 Close 數據框（計算 SCTR 使用）
+        close_df = pd.DataFrame()
+        for t in tickers:
+            try:
+                # 兼容 Multi-Index 結構
+                if isinstance(full_raw.columns, pd.MultiIndex):
+                    if t in full_raw.columns.levels[0]:
+                        close_df[t] = full_raw[t]['Close']
+                else:
+                    if t in full_raw.columns:
+                        close_df[t] = full_raw[t]
+            except:
+                continue
+
+        st.write("正在計算全球市場 SCTR 強度排名與 VCP 動態波幅...")
+        sctr_ranks, sctr_hist = calculate_sctr_ranks(tickers, lookback=20, pre_downloaded_data=close_df)
+        
         results = []
         pb = st.progress(0)
         
+        # 2. 本地記憶體極速掃描，無網路延遲
         for i, t in enumerate(tickers):
-            res = check_vcp_advanced(t, sctr_ranks, sctr_hist, only_b, b_days)
-            if res and res[3] >= min_sctr_val: 
-                results.append(res)
+            try:
+                # 提取個股 DataFrame
+                if isinstance(full_raw.columns, pd.MultiIndex):
+                    if t in full_raw.columns.levels[0]:
+                        ticker_df = full_raw[t]
+                        res = check_vcp_advanced_preloaded(t, ticker_df, sctr_ranks, sctr_hist, only_b, b_days)
+                        if res and res[3] >= min_sctr_val: 
+                            results.append(res)
+                else:
+                    # 如果只有單個 Ticker 數據
+                    ticker_df = full_raw
+                    res = check_vcp_advanced_preloaded(t, ticker_df, sctr_ranks, sctr_hist, only_b, b_days)
+                    if res and res[3] >= min_sctr_val: 
+                        results.append(res)
+            except Exception as e:
+                pass
             pb.progress((i + 1) / len(tickers))
 
         if results:
@@ -59,12 +110,9 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
             
             st.dataframe(
                 df_sorted, 
-                column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, 
-                use_container_width=True,
+                column_config={"圖表": st.column_config.LinkColumn("TradingView 圖表", display_text="🔍 查看圖表")},
                 hide_index=True
             )
-            st.success(f"掃描完成！共找到 {len(df)} 檔符合 VCP 多段收縮且 SCTR 持續攀升的標的。")
+            st.success(f"掃描完畢！篩選出符合馬克 VCP 標準股票共 {len(df_sorted)} 檔！")
         else:
-            st.warning("今日未篩選出符合 VCP 多段收縮與 SCTR 持續成長的標的。")
-    else:
-        st.error("無法取得市場股票清單，請檢查網路連線。")
+            st.info("當前篩選條件下，未找到符合 VCP 標準的標的。建議可適度降低最低 SCTR 限制。")
