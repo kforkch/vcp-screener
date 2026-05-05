@@ -2,6 +2,7 @@
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
+import numpy as np
 # 從 data_loader 匯入行業抓取函式
 from data_loader import get_sector_cached
 
@@ -68,7 +69,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
         low52, high52 = float(close.min()), float(close.max())
         
-        # 1. 趨勢模板過濾
+        # 1. 趨勢模板過濾 (Trend Template)
         cond = [
             curr_p > sma150 and curr_p > sma200, sma150 > sma200, 
             sma50 > sma150 and sma50 > sma200, curr_p > sma50,
@@ -76,51 +77,73 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         ]
         if sum(cond) < 6: return None
         
-        # 2. VCP 三段式收縮辨識 (T1 -> T2 -> T3)
-        # T1: 過去 40-60 天前的波動範圍
-        t1_series = close.iloc[-60:-40]
-        t1_contraction = (t1_series.max() - t1_series.min()) / t1_series.min() if len(t1_series) > 0 else 0.3
+        # 2. VCP 滾動區間法 + ATR 多級動態門檻
+        # 滾動區間劃分：w4 (60-45天前) -> w3 (45-30天前) -> w2 (30-15天前) -> w1 (最近 15 天)
+        w4 = close.iloc[-60:-45]
+        w3 = close.iloc[-45:-30]
+        w2 = close.iloc[-30:-15]
+        w1 = close.iloc[-15:]
         
-        # T2: 過去 20-40 天前的波動範圍
-        t2_series = close.iloc[-40:-20]
-        t2_contraction = (t2_series.max() - t2_series.min()) / t2_series.min() if len(t2_series) > 0 else 0.2
+        windows = [w4, w3, w2, w1]
+        ranges = []
+        for w in windows:
+            if len(w) > 0:
+                # 計算該區間震幅百分比 (Max - Min) / Min
+                r = (w.max() - w.min()) / w.min()
+                ranges.append(r)
+            else:
+                ranges.append(0.2)
+                
+        # 滾動斜率計算：斜率必須為負（代表波動整體走勢在收縮收窄）
+        x = np.array([0, 1, 2, 3])
+        y = np.array(ranges)
+        slope, _ = np.polyfit(x, y, 1)
         
-        # T3: 過去 5-20 天前的波動範圍
-        t3_series = close.iloc[-20:-5]
-        t3_contraction = (t3_series.max() - t3_series.min()) / t3_series.min() if len(t3_series) > 0 else 0.1
-        
-        # 實戰收縮型態確認 (T1 > T2 > T3 且 T3 需夠窄)
-        if not (t1_contraction > t2_contraction > t3_contraction and t3_contraction < 0.12):
+        if slope >= 0:
             return None
             
-        # 過去 5 天極窄收縮確認 (安靜點)
-        recent_range = (close.iloc[-5:].max() - close.iloc[-5:].min()) / close.iloc[-5:].min()
-        is_tight = "✅ 緊湊" if recent_range < 0.05 else "❌ 鬆散"
-
-        # 3. 成交量萎縮檢查
-        vol_ma20 = vol.rolling(20).mean().iloc[-1]
-        if vol.iloc[-1] > vol_ma20 * 1.1: return None 
+        # 計算 ATR(14)
+        atr_series = ta.atr(high, low, close, length=14)
+        atr_val = float(atr_series.iloc[-1]) if not atr_series.isna().iloc[-1] else (float(high.iloc[-1]) - float(low.iloc[-1]))
+        
+        # 最近 15 天 (w1) 的絕對價格震幅空間與百分比
+        w1_max = float(w1.max())
+        w1_min = float(w1.min())
+        w1_abs_range = w1_max - w1_min
+        w1_pct = ranges[-1]  # w1 震幅百分比
+        
+        # 3. 緊湊程度分級邏輯 (Fuzzy Logic Grading)
+        if w1_abs_range <= 1.4 * atr_val and w1_pct <= 0.10:
+            is_tight = "✅✅ 極緊"
+        elif w1_abs_range <= 1.8 * atr_val and w1_pct <= 0.13:
+            is_tight = "✅ 緊湊"
+        elif w1_abs_range <= 2.0 * atr_val and w1_pct <= 0.15:
+            is_tight = "🔸 尚可"
+        else:
+            # 超過 15% 震幅或 2.0 倍 ATR 則判定不符合收縮標準，直接排除
+            return None
             
-        # 4. SCTR 持續攀升檢查
+        # 4. 成交量萎縮檢查 (尋找量能乾枯 VUD)
+        vol_ma20 = vol.rolling(20).mean().iloc[-1]
+        if vol.iloc[-1] > vol_ma20 * 1.1: return None
+            
+        # 5. SCTR 持續攀升檢查
         sctr_val = round(sctr_map.get(ticker, 0), 1)
         sctr_hist = round(sctr_hist_map.get(ticker, 0), 1)
         if sctr_val < 80.0 or sctr_val <= sctr_hist: return None
         
-        # 5. 突破檢測
+        # 6. 突破檢測
         recent_max = float(close.iloc[-(b_days+1):-1].max())
         is_breakout = curr_p > recent_max
         if b_only and not is_breakout: return None
         
-        # 狀態轉換邏輯：若突破則升級為 20D突破，否則為強勢向上
+        # 狀態轉換
         status = f"🔥 {b_days}D突破" if is_breakout else "🚀 強勢向上"
         
-        # 6. 計算風險報酬
-        atr_series = ta.atr(high, low, close, length=14)
-        atr_val = float(atr_series.iloc[-1]) if not atr_series.isna().iloc[-1] else (float(high.iloc[-1]) - float(low.iloc[-1]))
-        
-        pivot_point = recent_max  
-        stop_loss = curr_p - (1.5 * atr_val)  
-        target_price = curr_p + (3.0 * (curr_p - stop_loss)) 
+        # 7. 計算風險報酬
+        pivot_point = recent_max
+        stop_loss = curr_p - (1.5 * atr_val)
+        target_price = curr_p + (3.0 * (curr_p - stop_loss))
         
         dist_high = round((1 - curr_p/high52) * 100, 2)
         vol_ratio = round(float(vol.iloc[-1]) / vol.rolling(20).mean().iloc[-1], 2)
