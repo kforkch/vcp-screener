@@ -105,7 +105,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         slope, _ = np.polyfit(x, y, 1)
         
         # 【超放寬】斜率門檻大幅提高，允許較明顯的波動
-        if slope > 0.08:
+        if slope > 0:
             return None
             
         # 計算 ATR(14)
