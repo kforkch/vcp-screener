@@ -111,7 +111,7 @@ def check_vcp_advanced_preloaded(ticker, ticker_df, sctr_map, sctr_hist_map, b_o
         t3_low  = float(roll_low.min().iloc[-5])
         t3_contraction = (t3_high - t3_low) / t3_low if t3_low > 0 else 0.1
         
-        # VCP 收縮核心邏輯
+        # VCP 收縮核心邏輯：滾動波幅遞減 + ATR 動態門檻
         dynamic_t3_threshold = min(0.08, atr_pct * 1.5)
         
         if not (t1_contraction > t2_contraction > t3_contraction and t3_contraction < dynamic_t3_threshold):
