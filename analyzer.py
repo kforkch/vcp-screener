@@ -79,13 +79,12 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         
       # 2. VCP 超彈性多段波動收縮（大幅放寬版）
         windows = [
-            close.iloc[-100:-65],
-            close.iloc[-80:-50],
-            close.iloc[-65:-40],
-            close.iloc[-50:-25],
-            close.iloc[-35:-15],
-            close.iloc[-20:]
-        ]
+    close.iloc[-100:-70],  # 遠期
+    close.iloc[-85:-55],   # 中遠期 (重疊 15 根)
+    close.iloc[-70:-40],   # 中期   (重疊 15 根)
+    close.iloc[-55:-25],   # 近期   (重疊 15 根)
+    close.iloc[-40:-15]    # 末端   (結束於 -15)
+]
         
         ranges = []
         for w in windows:
