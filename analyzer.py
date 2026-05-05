@@ -91,22 +91,22 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
             if len(w) >= 4:        # 進一步降低 K 線數要求
                 r = (w.max() - w.min()) / w.min()
                 ranges.append(r)
-            else:
-                val = ranges[-1] if ranges else 0.25
-                ranges.append(val)
+            # 判定 A：波動必須嚴格遞減 (每一段都比前一段安靜)
+        is_contracting = all(x > y for x, y in zip(ranges, ranges[1:]))
         
-        valid_ranges = [r for r in ranges if r > 0]
+        # 判定 B：末端必須極度緊縮 (最後一段波動率小於 8%)
+        is_tight = ranges[-1] < 0.08
         
-        if len(valid_ranges) < 2:   # 至少 2 段即可
+        # 判定 C：斜率依然作為輔助檢查
+        x = np.arange(len(ranges))
+        y = np.array(ranges)
+        slope, _ = np.polyfit(x, y, 1)
+
+        # 綜合篩選條件
+        if not is_contracting or not is_tight or slope >= 0:
             return None
             
-        x = np.arange(len(valid_ranges))
-        y = np.array(valid_ranges)
-        slope, _ = np.polyfit(x, y, 1)
-        
-        # 【超放寬】斜率門檻大幅提高，允許較明顯的波動
-        if slope > 0:
-            return None
+        return True # 符合精準版 VCP
             
         # 計算 ATR(14)
         atr_series = ta.atr(high, low, close, length=14)
