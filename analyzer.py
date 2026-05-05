@@ -77,38 +77,35 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         ]
         if sum(cond) < 6: return None
         
-        # 2. VCP 彈性多段波動收縮判斷（推薦版）
-        # 改用更多窗口，允許 2~5 段收縮，不強求固定4段
+       # 2. VCP 彈性多段波動收縮判斷（適合科技股）
         windows = [
-            close.iloc[-75:-50],   # 更早一段
-            close.iloc[-60:-40],
-            close.iloc[-45:-25],
-            close.iloc[-30:-15],
-            close.iloc[-20:-5],    # 接近最新但避開最後幾天
-            close.iloc[-15:]       # 最近15天
+            close.iloc[-80:-55],
+            close.iloc[-65:-45],
+            close.iloc[-50:-30],
+            close.iloc[-35:-18],
+            close.iloc[-25:-8],
+            close.iloc[-15:]
         ]
         
         ranges = []
         for w in windows:
-            if len(w) >= 5:  # 至少要有5根K線才計算
+            if len(w) >= 5:
                 r = (w.max() - w.min()) / w.min()
                 ranges.append(r)
             else:
-                ranges.append(0.25)
+                ranges.append(0.28)
         
-        # 移除前面幾個可能不完整的區間，只取有效的 ranges
         valid_ranges = [r for r in ranges if r > 0]
         
         if len(valid_ranges) < 2:
-            return None  # 至少要有2段才能判斷收縮
-        
-        # 計算整體趨勢斜率（越往後應該越小 = 負斜率越好）
+            return None
+            
         x = np.arange(len(valid_ranges))
         y = np.array(valid_ranges)
         slope, _ = np.polyfit(x, y, 1)
         
-        # 【大幅放寬】允許輕微正斜率，只要不是明顯擴張即可
-        if slope > 0.025:  
+        # 放寬後：允許輕微擴張，只要不超過0.025
+        if slope > 0.025:
             return None
             
         # 計算 ATR(14)
@@ -116,17 +113,18 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         atr_val = float(atr_series.iloc[-1]) if not atr_series.isna().iloc[-1] else (float(high.iloc[-1]) - float(low.iloc[-1]))
         
         # 最近 15 天 (w1) 的絕對價格震幅空間與百分比
+        w1 = close.iloc[-15:]
         w1_abs_range = float(w1.max() - w1.min())
-        w1_pct = (w1.max() - w1.min()) / w1.min()
+        w1_pct = (w1.max() - w1.min()) / w1.min() if w1.min() > 0 else 1
         
-        if w1_abs_range <= 2.0 * atr_val and w1_pct <= 0.18:
+        if w1_abs_range <= 2.2 * atr_val and w1_pct <= 0.20:
             is_tight = "✅✅ 極緊"
-        elif w1_abs_range <= 2.5 * atr_val and w1_pct <= 0.22:
+        elif w1_abs_range <= 2.8 * atr_val and w1_pct <= 0.25:
             is_tight = "✅ 緊湊"
-        elif w1_abs_range <= 3.0 * atr_val and w1_pct <= 0.28:
+        elif w1_abs_range <= 3.5 * atr_val and w1_pct <= 0.32:
             is_tight = "🔸 尚可"
         else:
-            return None   # 超過這個還是排除
+            return None
             
         # 4. 成交量萎縮檢查 (尋找量能乾枯 VUD)
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
