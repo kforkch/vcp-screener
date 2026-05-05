@@ -89,7 +89,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
             curr_p >= low52 * 1.2,                                    # 底部放寬
             curr_p >= high52 * 0.65                                   # 回調 35% 以內接受
         ]
-        if sum(cond) < 5:
+        if sum(cond) < 6:
             return None
 
         # ========== 2. 成交量萎縮（檢查醞釀期，非單日） ==========
