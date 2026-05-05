@@ -117,14 +117,14 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         w1_abs_range = float(w1.max() - w1.min())
         w1_pct = (w1.max() - w1.min()) / w1.min() if w1.min() > 0 else 1
         
-        if w1_abs_range <= 4.0 * atr_val and w1_pct <= 0.40:
+        if w1_abs_range <= 1.6 * atr_val and w1_pct <= 0.12:
             is_tight = "✅✅ 極緊"
-        elif w1_abs_range <= 5.0 * atr_val and w1_pct <= 0.50:
+        elif w1_abs_range <= 2.0 * atr_val and w1_pct <= 0.15:
             is_tight = "✅ 緊湊"
-        elif w1_abs_range <= 6.5 * atr_val and w1_pct <= 0.65:
+        elif w1_abs_range <= 2.3 * atr_val and w1_pct <= 0.18:
             is_tight = "🔸 尚可"
         else:
-            return None
+            return None   # 超過這個還是排除
             
         # 4. 成交量萎縮檢查 (尋找量能乾枯 VUD)
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
