@@ -113,11 +113,11 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         w1_pct = ranges[-1]  # w1 震幅百分比
         
         # 3. 緊湊程度分級邏輯 (Fuzzy Logic Grading)
-        if w1_abs_range <= 1.6 * atr_val and w1_pct <= 0.12:
+        if w1_abs_range <= 1.4 * atr_val and w1_pct <= 0.10:
             is_tight = "✅✅ 極緊"
-        elif w1_abs_range <= 2.0 * atr_val and w1_pct <= 0.15:
+        elif w1_abs_range <= 1.8 * atr_val and w1_pct <= 0.13:
             is_tight = "✅ 緊湊"
-        elif w1_abs_range <= 2.2 * atr_val and w1_pct <= 0.17:
+        elif w1_abs_range <= 2.0 * atr_val and w1_pct <= 0.15:
             is_tight = "🔸 尚可"
         else:
             # 超過 15% 震幅或 2.0 倍 ATR 則判定不符合收縮標準，直接排除
