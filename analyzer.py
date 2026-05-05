@@ -106,7 +106,6 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         if not is_contracting or not is_tight or slope >= 0:
             return None
             
-        return True # 符合精準版 VCP
             
         # 計算 ATR(14)
         atr_series = ta.atr(high, low, close, length=14)
