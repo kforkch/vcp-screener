@@ -77,23 +77,23 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         ]
         if sum(cond) < 6: return None
         
-       # 2. VCP 彈性多段波動收縮判斷（適合科技股）
+      # 2. VCP 彈性多段波動收縮（針對 Nasdaq 再放寬）
         windows = [
-            close.iloc[-80:-55],
-            close.iloc[-65:-45],
-            close.iloc[-50:-30],
-            close.iloc[-35:-18],
-            close.iloc[-25:-8],
-            close.iloc[-15:]
+            close.iloc[-90:-60],
+            close.iloc[-70:-45],
+            close.iloc[-55:-35],
+            close.iloc[-40:-20],
+            close.iloc[-25:-10],
+            close.iloc[-18:]
         ]
         
         ranges = []
         for w in windows:
-            if len(w) >= 5:
+            if len(w) >= 4:   # 降低最低K線要求
                 r = (w.max() - w.min()) / w.min()
                 ranges.append(r)
             else:
-                ranges.append(0.28)
+                ranges.append(0.35)
         
         valid_ranges = [r for r in ranges if r > 0]
         
@@ -104,8 +104,8 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         y = np.array(valid_ranges)
         slope, _ = np.polyfit(x, y, 1)
         
-        # 放寬後：允許輕微擴張，只要不超過0.025
-        if slope > 0.025:
+        # 大幅放寬斜率：允許明顯一些的正斜率
+        if slope > 0.045:
             return None
             
         # 計算 ATR(14)
