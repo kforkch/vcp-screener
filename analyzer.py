@@ -99,7 +99,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         y = np.array(ranges)
         slope, _ = np.polyfit(x, y, 1)
         
-        if slope >= 0.015:
+        if slope >= 0:
             return None
             
         # 計算 ATR(14)
