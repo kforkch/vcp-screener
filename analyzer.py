@@ -92,14 +92,19 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
                 r = (w.max() - w.min()) / w.min()
                 ranges.append(r)
             else:
-                ranges.append(0.2)
+                ranges.append(0.25)  # 略微提高預設值
                 
-        # 滾動斜率計算：斜率必須為負（代表波動整體走勢在收縮收窄）
-        x = np.array([0, 1, 2, 3])
-        y = np.array(ranges)
-        slope, _ = np.polyfit(x, y, 1)
-        
-        if slope >= 0:
+        # 【放寬重點】斜率條件放寬：允許輕微正斜率
+        if len(ranges) == 4:
+            x = np.array([0, 1, 2, 3])
+            y = np.array(ranges)
+            slope, _ = np.polyfit(x, y, 1)
+            
+            # 原版：slope >= 0 就排除
+            # 新放寬版：允許小幅正斜率（最高到 0.018）
+            if slope > 0.018:  
+                return None
+        else:
             return None
             
         # 計算 ATR(14)
