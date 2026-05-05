@@ -113,7 +113,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         atr_val = float(atr_series.iloc[-1]) if not atr_series.isna().iloc[-1] else (float(high.iloc[-1]) - float(low.iloc[-1]))
         
         # 最近 15 天 (w1) 的絕對價格震幅空間與百分比
-        w1 = close.iloc[-20:]      # 拉長觀察窗口
+        w1 = close.iloc[-15:]      # 拉長觀察窗口
         w1_abs_range = float(w1.max() - w1.min())
         w1_pct = (w1.max() - w1.min()) / w1.min() if w1.min() > 0 else 1
         
