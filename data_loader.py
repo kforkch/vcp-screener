@@ -1,3 +1,4 @@
+# data_loader.py
 import os
 import io
 import pandas as pd
@@ -36,8 +37,8 @@ def safe_cache(ttl=86400):
         return func
     return decorator
 
+# 輔助函數：從 data/ 資料夾讀取 txt 檔案
 def load_tickers_from_file(filename):
-    """安全讀取本地 text 檔案，若檔案不存在或發生錯誤時不會導致程式崩潰"""
     file_path = os.path.join("data", filename)
     try:
         if os.path.exists(file_path):
@@ -51,7 +52,7 @@ def load_tickers_from_file(filename):
                 print(f"⚠️ {msg}")
             return []
     except Exception as e:
-        msg = f"讀取 {filename} 失敗: {e}"
+        msg = f"讀取 {filename} 發生錯誤: {e}"
         if is_streamlit_env:
             st.error(msg)
         else:
@@ -89,18 +90,22 @@ def get_stock_list(market):
     
     return [], None
 
-# 行業分類快照快取 (避免直接請求 yfinance 被封鎖)
+# 補上 get_sector_cached 函數供 analyzer.py 調用
 def get_sector_cached(ticker):
+    """
+    獲取股票行業，優先查詢 Supabase 中的快照，若無則降級請求 yfinance
+    """
     if supabase:
         try:
+            # 優先從你的 market_sctr / stock_warehouse 中獲取
             res = supabase.table("market_sctr").select("sector").eq("ticker", ticker).execute()
             if res.data and res.data[0].get('sector'):
                 return res.data[0]['sector']
-        except Exception as e:
-            print(f"⚠️ 從中台讀取行業失敗 ({ticker}): {e}")
-            
+        except:
+            pass
+
     try:
-        ticker_obj = yf.Ticker(ticker)
-        return ticker_obj.info.get('sector', 'Unknown')
+        tk = yf.Ticker(ticker)
+        return tk.info.get('sector', 'Unknown')
     except:
         return 'Unknown'
