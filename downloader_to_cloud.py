@@ -26,9 +26,13 @@ def get_and_upload(tickers):
         return
 
     print(f"🚀 開始同步 {len(tickers)} 檔股票數據至 Supabase 數據中台...")
-    for t in tickers:
+    
+    for idx, t in enumerate(tickers, 1):
         try:
+            print(f"[{idx}/{len(tickers)}] 正在抓取 {t} ...")
             tk = yf.Ticker(t)
+            
+            # 抓取 2 年歷史數據，用來作回測數據源
             df = tk.history(period="2y")
             if df.empty:
                 print(f"⚠️ {t} 無 K 線交易數據，跳過")
@@ -42,9 +46,8 @@ def get_and_upload(tickers):
                 "last_update": df.index[-1].strftime('%Y-%m-%d')
             }
             supabase.table("stock_warehouse").upsert(warehouse_data).execute()
-            print(f"✅ {t} 最新狀態同步成功")
             
-            # ==================== 2. 同步完整 2 年歷史 K 線至 stock_backtest_data ====================
+            # ==================== 2. 同步 2 年歷史 K 線至 stock_backtest_data ====================
             backtest_records = []
             for date, row in df.iterrows():
                 backtest_records.append({
@@ -57,28 +60,54 @@ def get_and_upload(tickers):
                     "volume": int(row["Volume"])
                 })
             
-            # 使用批次寫入 (Bulk Upsert)，每 500 筆打包一次，速度極快且不易出錯
+            # 批次 Upsert (Bulk Upsert)，每 500 筆打包一次，大幅減輕 API 負擔並提升速度
             chunk_size = 500
             for i in range(0, len(backtest_records), chunk_size):
                 supabase.table("stock_backtest_data").upsert(backtest_records[i:i+chunk_size]).execute()
             
-            print(f"📊 {t} 共 {len(backtest_records)} 筆歷史 K 線回測數據同步成功！")
+            print(f"✅ {t} 同步成功 (最新價: {warehouse_data['price']}, 歷史數據: {len(backtest_records)} 筆)")
 
         except Exception as e:
             print(f"❌ {t} 同步過程中發生錯誤: {e}")
 
 if __name__ == "__main__":
     target_list = []
+    
+    # 解決 GitHub Actions 工作目錄下的路徑定位問題
+    # 若在 Actions 執行時發現 data 目錄不存在，手動將上傳的 txt 複製或建立對應結構
+    if not os.path.exists("data"):
+        os.makedirs("data", exist_ok=True)
+        # 尋找有沒有直接放在根目錄下的 txt，有的話就搬移進 data/
+        for txt_file in ["hsi.txt", "csi300.txt"]:
+            if os.path.exists(txt_file):
+                os.rename(txt_file, os.path.join("data", txt_file))
+                print(f"📦 已自動將根目錄的 {txt_file} 歸檔至 data/ 資料夾。")
+
     try:
         from data_loader import get_stock_list
-        for market in ["美股 (Nasdaq 100)", "港股 (恒生指數)"]:
+        
+        # 🌟 精準對齊你的 data_loader.py 內的四大市場名稱！
+        my_markets = [
+            "美股 (S&P 500)", 
+            "美股 (Nasdaq 100)", 
+            "港股 (恒生指數)", 
+            "中國 A 股 (滬深 300 龍頭)"  # 一字不差，精準對接
+        ]
+        
+        for market in my_markets:
             tickers, _ = get_stock_list(market)
             if tickers:
                 target_list.extend(tickers)
+                print(f"📥 成功載入 【{market}】，共計 {len(tickers)} 檔股票。")
+                
+        # 去除重複股票代號並排序
         target_list = sorted(list(set(target_list)))
+        print(f"🔥 全球名單載入完畢！本次將同步 {len(target_list)} 檔股票數據至 Supabase。")
+        
     except Exception as e:
-        print(f"⚠️ 自動載入市場清單時發生非致命異常 ({e})，降級使用核心測試清單。")
+        print(f"⚠️ 自動載入市場清單時發生異常 ({e})，降級使用核心測試清單。")
 
+    # 基礎保底
     if not target_list:
         target_list = ["AAPL", "0700.HK", "600519.SS"] 
         
