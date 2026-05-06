@@ -8,6 +8,7 @@ import yfinance as yf
 # 核心安全機制：檢測當前是不是在 Streamlit 網頁環境下執行
 try:
     import streamlit as st
+    # 測試 Streamlit 上下文是否真的可用
     is_streamlit_env = True
 except ImportError:
     is_streamlit_env = False
@@ -29,11 +30,15 @@ if SUPABASE_URL and SUPABASE_KEY:
     except Exception as e:
         print(f"⚠️ Supabase 連線失敗: {e}")
 
-# 自訂快取裝飾器：在網頁端啟用快取提升速度，在 Actions 背景端則當作普通函數執行
+# 自訂安全快取裝飾器：在網頁端啟用快取提升速度，在 Actions 背景端則作為普通無快取函數執行
 def safe_cache(ttl=86400):
     def decorator(func):
         if is_streamlit_env:
-            return st.cache_data(ttl=ttl)(func)
+            try:
+                return st.cache_data(ttl=ttl)(func)
+            except Exception:
+                # 即使 import 成功，如果在 background 執行 st.cache_data 失敗，則 fallback 成原函數
+                return func
         return func
     return decorator
 
@@ -63,6 +68,7 @@ def load_tickers_from_file(filename):
 def get_stock_list(market):
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
+        # 美股邏輯保持不變 (從網頁抓取)
         if market == "美股 (S&P 500)":
             url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
             table = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))[0]
@@ -75,9 +81,11 @@ def get_stock_list(market):
                 if 'Ticker' in t.columns: return t['Ticker'].tolist(), "^IXIC"
                 if 'Symbol' in t.columns: return t['Symbol'].tolist(), "^IXIC"
         
+        # 港股邏輯：從 data/hsi.txt 讀取
         elif market == "港股 (恒生指數)":
             return load_tickers_from_file("hsi.txt"), "^HSI"
 
+        # 中國 A 股邏輯：從 data/csi300.txt 讀取
         elif market == "中國 A 股 (滬深 300 龍頭)":
             return load_tickers_from_file("csi300.txt"), "000300.SS"
             
@@ -90,14 +98,13 @@ def get_stock_list(market):
     
     return [], None
 
-# 補上 get_sector_cached 函數供 analyzer.py 調用
+# 供 analyzer.py 內部安全調用
 def get_sector_cached(ticker):
     """
     獲取股票行業，優先查詢 Supabase 中的快照，若無則降級請求 yfinance
     """
     if supabase:
         try:
-            # 優先從你的 market_sctr / stock_warehouse 中獲取
             res = supabase.table("market_sctr").select("sector").eq("ticker", ticker).execute()
             if res.data and res.data[0].get('sector'):
                 return res.data[0]['sector']
