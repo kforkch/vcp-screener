@@ -5,7 +5,7 @@ import pandas_ta as ta
 import numpy as np
 from data_loader import get_sector_cached
 
-# ==================== 🛠️ 數據中台無痛代理代理器 (唯二新增的代理模組) ====================
+# ==================== 🛠️ 數據中台無痛代理代理器 ====================
 def get_klines_from_supabase(tickers):
     """
     優先從 Supabase 中台的 stock_klines 資料表高速載入 K 線。
