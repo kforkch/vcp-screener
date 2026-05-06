@@ -1,8 +1,48 @@
 # main.py
 import streamlit as st
 import pandas as pd
-from data_loader import get_stock_list
-from analyzer import calculate_sctr_ranks, check_vcp_advanced
+from data_loader import get_stock_list, calculate_sctr_ranks, supabase
+
+# ==================== 核心 yfinance 攔截注入 ====================
+import yfinance as yf
+
+def mock_download(tickers, *args, **kwargs):
+    """
+    [中台代理] 欺騙原 yfinance 套件。當 analyzer.py 呼叫 yf.download 時，
+    此函數會攔截請求，並從 Supabase 資料庫抓取對應日 K 回傳，完全不用聯網到 Yahoo Finance。
+    """
+    # 確保 tickers 是單一字串
+    ticker = tickers[0] if isinstance(tickers, list) else tickers
+    try:
+        # 從 Supabase 取出這檔股票所有的 K 線
+        response = supabase.table("stock_klines")\
+            .select("date, open, high, low, close, volume")\
+            .eq("ticker", ticker)\
+            .order("date", ascending=True)\
+            .execute()
+        
+        data = response.data
+        if not data:
+            return pd.DataFrame() # 回傳空 DataFrame 避免 crash
+
+        df = pd.DataFrame(data)
+        df['date'] = pd.to_datetime(df['date'])
+        df.set_index('date', inplace=True)
+        # yfinance 回傳的 columns 是首字母大寫，保持一致
+        df.rename(columns={
+            "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"
+        }, inplace=True)
+        return df
+    except Exception as e:
+        print(f"Mock Download 發生錯誤: {e}")
+        return pd.DataFrame()
+
+# 巧妙地用 mock 函數取代 yfinance 模組底層的 download
+yf.download = mock_download
+# ===============================================================
+
+# 載入原分析器 (此時 analyzer.py 內部的 yf.download 已經被替換為 Supabase 讀取)
+from analyzer import check_vcp_advanced
 
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
 st.title("🏹 VCP Alpha 全球終極交易終端")
