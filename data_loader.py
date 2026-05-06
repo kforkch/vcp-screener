@@ -5,54 +5,54 @@ import requests
 import yfinance as yf
 from supabase import create_client
 
-# 安全檢測：若在 Streamlit 之外環境運行，不載入 streamlit 框架
+# 核心安全機制：檢測當前是不是在 Streamlit 網頁環境下執行
 try:
     import streamlit as st
-    is_streamlit = True
+    is_streamlit_env = True
 except ImportError:
-    is_streamlit = False
+    is_streamlit_env = False
 
-# 讀取 Supabase 金鑰 (相容 Streamlit secrets 與系統環境變數)
-if is_streamlit:
+# 安全讀取金鑰 (相容 Streamlit Secrets 與 GitHub 系統環境變數)
+if is_streamlit_env:
     SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL"))
     SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY"))
 else:
     SUPABASE_URL = os.environ.get("SUPABASE_URL")
     SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-# 初始化 Supabase
+# 初始化 Supabase 用戶端
 supabase = None
 if SUPABASE_URL and SUPABASE_KEY:
     try:
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception as e:
-        print(f"⚠️ Supabase 初始化失敗: {e}")
+        print(f"⚠️ Supabase 連線失敗: {e}")
 
-# 自訂快取代理器：在 Streamlit 使用快取，在 Actions 背景則直接執行
+# 自訂快取裝飾器：在網頁端啟用快取提升速度，在 Actions 背景端則當作普通函數執行
 def safe_cache(ttl=86400):
     def decorator(func):
-        if is_streamlit:
+        if is_streamlit_env:
             return st.cache_data(ttl=ttl)(func)
         return func
     return decorator
 
-# 輔助函數：從 data/ 資料夾讀取 txt 檔案
 def load_tickers_from_file(filename):
+    """安全讀取本地 text 檔案，若檔案不存在不崩潰"""
     file_path = os.path.join("data", filename)
     try:
         if os.path.exists(file_path):
             with open(file_path, 'r', encoding='utf-8') as f:
                 return [line.strip() for line in f if line.strip()]
         else:
-            msg = f"檔案不存在: {file_path}，將返回空列表。"
-            if is_streamlit:
+            msg = f"找不到檔案: {file_path}，將返回空名單。"
+            if is_streamlit_env:
                 st.warning(msg)
             else:
                 print(f"⚠️ {msg}")
             return []
     except Exception as e:
-        msg = f"讀取 {filename} 發生錯誤: {e}"
-        if is_streamlit:
+        msg = f"讀取 {filename} 失敗: {e}"
+        if is_streamlit_env:
             st.error(msg)
         else:
             print(f"❌ {msg}")
@@ -81,7 +81,7 @@ def get_stock_list(market):
             return load_tickers_from_file("csi300.txt"), "000300.SS"
             
     except Exception as e:
-        if is_streamlit:
+        if is_streamlit_env:
             st.error(f"獲取市場清單失敗: {e}")
         else:
             print(f"❌ 獲取市場清單失敗: {e}")
@@ -92,7 +92,7 @@ def get_stock_list(market):
 @safe_cache(ttl=86400)
 def get_sector_cached(ticker):
     """
-    [無痛代理] 優先從 Supabase 中讀取行業分類，若中台無數據才調用 yfinance
+    [快取代理] 優先從 Supabase 中台讀取行業分類，減少 yfinance info 的請求負擔
     """
     if supabase:
         try:
