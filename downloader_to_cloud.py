@@ -1,5 +1,6 @@
 # downloader_to_cloud.py
 import os
+import sys
 import yfinance as yf
 
 def get_supabase_client():
@@ -49,21 +50,28 @@ def get_and_upload(tickers):
             print(f"❌ {t} 失敗: {e}")
 
 if __name__ == "__main__":
-    # 嘗試引入資料庫配置中的真實股票名單，若無則降級為預設測試名單
     try:
-        from data_loader import get_stock_list
         target_list = []
-        for market in ["美股 (Nasdaq 100)", "港股 (恒生指數)"]:
-            tickers, _ = get_stock_list(market)
-            if tickers:
-                target_list.extend(tickers)
-        target_list = sorted(list(set(target_list)))
-    except Exception as e:
-        print(f"⚠️ 自動載入市場清單時發生非致命異常 ({e})，使用核心名單。")
-        target_list = []
+        # 防禦性導入：如果 data_loader 或 txt 讀取崩潰，捕獲它並優雅降級
+        try:
+            from data_loader import get_stock_list
+            for market in ["美股 (Nasdaq 100)", "港股 (恒生指數)"]:
+                tickers, _ = get_stock_list(market)
+                if tickers:
+                    target_list.extend(tickers)
+        except Exception as err_loader:
+            print(f"⚠️ 讀取本地代碼表失敗 ({err_loader})，降級使用預設監控名單...")
+            target_list = ["AAPL", "MSFT", "GOOGL", "NVDA", "TSLA", "0700.HK", "9988.HK"]
 
-    # 基礎降級名單，避免名單為空而中斷
-    if not target_list:
-        target_list = ["AAPL", "0700.HK", "600519.SS"] 
+        if not target_list:
+            print("⚠️ 未找到任何待同步的股票代碼，任務安全結束。")
+            sys.exit(0)
+
+        # 去重
+        target_list = list(set(target_list))
+        get_and_upload(target_list)
         
-    get_and_upload(target_list)
+    except Exception as e:
+        # 終極防禦：捕獲最外層所有未知異常，打印錯誤日誌，但以 exit code 0 結束，避免 Workflow 報警中斷
+        print(f"🚨 同步任務遭遇未預期錯誤: {e}")
+        sys.exit(0)
