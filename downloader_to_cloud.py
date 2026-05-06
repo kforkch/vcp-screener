@@ -72,7 +72,7 @@ if __name__ == "__main__":
     # 去除重複股票
     all_tickers = list(set(all_tickers))
     
-    # 降級防護機制：如果本地 data/hsi.txt 還沒有，使用基本核心股票，確保不崩潰空轉
+    # 降級防護機制：如果本地資料夾沒有任何代碼，使用基本核心股票，確保不崩潰空轉
     if not all_tickers:
         all_tickers = ["AAPL", "MSFT", "GOOG", "0700.HK", "600519.SS"]
         print(f"⚠️ 未能獲取全市場清單，切換至基礎同步清單：{all_tickers}")
