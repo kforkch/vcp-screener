@@ -1,16 +1,26 @@
 # main.py
 import streamlit as st
 import pandas as pd
-from data_loader import get_stock_list, calculate_sctr_ranks, supabase
-
-# ==================== 核心 yfinance 攔截注入 ====================
 import yfinance as yf
 
+# 1. 優先安全導入 data_loader（避免在最外層發生 Circular Import）
+import data_loader
+from data_loader import get_stock_list
+
+# 從 data_loader 安全地取得已初始化的 supabase 用戶端
+supabase = getattr(data_loader, "supabase", None)
+
+# ==================== 核心 yfinance 攔截注入 ====================
 def mock_download(tickers, *args, **kwargs):
     """
     [中台代理] 欺騙原 yfinance 套件。當 analyzer.py 呼叫 yf.download 時，
     此函數會攔截請求，並從 Supabase 資料庫抓取對應日 K 回傳，完全不用聯網到 Yahoo Finance。
     """
+    if not supabase:
+        print("⚠️ 數據中台未連線，Mock Download 降級回原本的 yfinance 下載...")
+        # 降級使用原本 yfinance 備份的真實下載函數（防止無限遞迴，我們在下方備份）
+        return REAL_YF_DOWNLOAD(tickers, *args, **kwargs)
+
     # 確保 tickers 是單一字串
     ticker = tickers[0] if isinstance(tickers, list) else tickers
     try:
@@ -23,7 +33,8 @@ def mock_download(tickers, *args, **kwargs):
         
         data = response.data
         if not data:
-            return pd.DataFrame() # 回傳空 DataFrame 避免 crash
+            print(f"⚠️ 中台無 {ticker} K 線資料，降級調用 yfinance...")
+            return REAL_YF_DOWNLOAD(tickers, *args, **kwargs)
 
         df = pd.DataFrame(data)
         df['date'] = pd.to_datetime(df['date'])
@@ -34,15 +45,18 @@ def mock_download(tickers, *args, **kwargs):
         }, inplace=True)
         return df
     except Exception as e:
-        print(f"Mock Download 發生錯誤: {e}")
-        return pd.DataFrame()
+        print(f"Mock Download 發生錯誤: {e}，自動降級調用 yfinance")
+        return REAL_YF_DOWNLOAD(tickers, *args, **kwargs)
 
+# 💡 安全防禦：先備份真實的 yfinance download，以便在 Supabase 沒資料時自動無感降級
+REAL_YF_DOWNLOAD = yf.download
 # 巧妙地用 mock 函數取代 yfinance 模組底層的 download
 yf.download = mock_download
 # ===============================================================
 
-# 載入原分析器 (此時 analyzer.py 內部的 yf.download 已經被替換為 Supabase 讀取)
-from analyzer import check_vcp_advanced
+# 2. 載入原分析器 (此時 analyzer.py 內部的 yf.download 已經被替換為 Supabase 讀取)
+# 修正引入路徑：將 calculate_sctr_ranks 從 analyzer 引入 (解決原 ImportError 核心痛點)
+from analyzer import check_vcp_advanced, calculate_sctr_ranks
 
 st.set_page_config(page_title="VCP Alpha Terminal", layout="wide")
 st.title("🏹 VCP Alpha 全球終極交易終端")
@@ -101,10 +115,4 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
                 df_sorted, 
                 column_config={"圖表": st.column_config.LinkColumn("查看", display_text="Open")}, 
                 use_container_width=True,
-                hide_index=True
-            )
-            st.success(f"掃描完成！共找到 {len(df)} 檔符合 VCP 多段收縮且 SCTR 持續攀升的標的。")
-        else:
-            st.warning("今日未篩選出符合 VCP 多段收縮與 SCTR 持續成長的標的。")
-    else:
-        st.error("無法取得市場股票清單，請檢查網路連線。")
+                hide_
