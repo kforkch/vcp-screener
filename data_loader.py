@@ -37,7 +37,7 @@ def safe_cache(ttl=86400):
     return decorator
 
 def load_tickers_from_file(filename):
-    """安全讀取本地 text 檔案，若檔案不存在不崩潰"""
+    """安全讀取本地 text 檔案，若檔案不存在或發生錯誤時不會導致程式崩潰"""
     file_path = os.path.join("data", filename)
     try:
         if os.path.exists(file_path):
@@ -91,9 +91,7 @@ def get_stock_list(market):
 
 @safe_cache(ttl=86400)
 def get_sector_cached(ticker):
-    """
-    [快取代理] 優先從 Supabase 中台讀取行業分類，減少 yfinance info 的請求負擔
-    """
+    """取得股票行業板塊，優先從 Supabase 讀取，若無才請求 yfinance"""
     if supabase:
         try:
             res = supabase.table("market_sctr").select("sector").eq("ticker", ticker).execute()
