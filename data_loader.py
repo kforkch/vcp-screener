@@ -1,15 +1,40 @@
-# data_loader.py
-import streamlit as st
+import os
+import io
 import pandas as pd
 import requests
-import io
-import os
+import yfinance as yf
 from supabase import create_client
 
-# 初始化 Supabase 用戶端
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL", "請填入你的_SUPABASE_URL"))
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY", "請填入你的_SUPABASE_KEY"))
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# 安全導入 Streamlit：如果是在 GitHub Actions (背景) 執行，不使用 streamlit.cache
+try:
+    import streamlit as st
+    use_streamlit = True
+except ImportError:
+    use_streamlit = False
+
+# 讀取 Supabase 金鑰 (相容 Streamlit Cloud 與 GitHub 環境變數)
+if use_streamlit:
+    SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL"))
+    SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY"))
+else:
+    SUPABASE_URL = os.environ.get("SUPABASE_URL")
+    SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+# 初始化 Supabase
+supabase = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        print(f"⚠️ Supabase 初始化失敗: {e}")
+
+# 建立安全快取裝飾器
+def safe_cache(ttl):
+    def decorator(func):
+        if use_streamlit:
+            return st.cache_data(ttl=ttl)(func)
+        return func
+    return decorator
 
 # 輔助函數：從 data/ 資料夾讀取 txt 檔案
 def load_tickers_from_file(filename):
@@ -19,13 +44,19 @@ def load_tickers_from_file(filename):
             with open(file_path, 'r', encoding='utf-8') as f:
                 return [line.strip() for line in f if line.strip()]
         else:
-            st.error(f"檔案不存在: {file_path}")
+            if use_streamlit:
+                st.error(f"檔案不存在: {file_path}")
+            else:
+                print(f"⚠️ 檔案不存在: {file_path}")
             return []
     except Exception as e:
-        st.error(f"讀取 {filename} 時發生錯誤: {e}")
+        if use_streamlit:
+            st.error(f"讀取 {filename} 時發生錯誤: {e}")
+        else:
+            print(f"❌ 讀取 {filename} 發生錯誤: {e}")
         return []
 
-@st.cache_data(ttl=86400)
+@safe_cache(ttl=86400)
 def get_stock_list(market):
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -45,48 +76,36 @@ def get_stock_list(market):
             return load_tickers_from_file("hsi.txt"), "^HSI"
 
         elif market == "中國 A 股 (滬深 300 龍頭)":
-            return load_tickers_from_file("csi300.txt"), "^000300.SS"
+            return load_tickers_from_file("csi300.txt"), "000300.SS"
+            
     except Exception as e:
-        st.error(f"讀取名單錯誤: {e}")
-        return [], ""
+        if use_streamlit:
+            st.error(f"獲取市場清單失敗: {e}")
+        else:
+            print(f"❌ 獲取市場清單失敗: {e}")
+        return [], None
+    
+    return [], None
 
-# ==================== Supabase 中台解耦底層 ====================
+# ==================== Supabase 中台代理核心 ====================
 
-@st.cache_data(ttl=1800)
-def calculate_sctr_ranks(tickers, lookback=20):
-    """
-    [代理優化] 覆蓋原 yfinance 計算方法。
-    直接從 Supabase 中台拉取所有 ticker 的 Raw Score，在記憶體做快速排名並返回，保持與原函數的簽名格式一致。
-    """
-    try:
-        response = supabase.table("market_sctr").select("ticker, sctr_current, sctr_historical").in_("ticker", tickers).execute()
-        data = response.data
-        if not data:
-            return {}, {}
-
-        df = pd.DataFrame(data)
-        
-        # 記憶體內極速做 Rank 計算 (0-100分)
-        df['rank_curr'] = df['sctr_current'].rank(pct=True) * 99.9
-        df['rank_hist'] = df['sctr_historical'].rank(pct=True) * 99.9
-
-        dict_curr = df.set_index('ticker')['rank_curr'].to_dict()
-        dict_hist = df.set_index('ticker')['rank_hist'].to_dict()
-
-        return dict_curr, dict_hist
-    except Exception as e:
-        print(f"從 Supabase 獲取 SCTR 失敗: {e}")
-        return {}, {}
-
-@st.cache_data(ttl=86400)
+@safe_cache(ttl=86400)
 def get_sector_cached(ticker):
     """
-    [代理優化] 快速獲取板塊分類，減少本地硬碟 I/O。
+    [升級] 優先從 Supabase 中台獲取行業分類，若無才調用 yfinance (完全不改原函數簽名)
     """
+    if supabase:
+        try:
+            res = supabase.table("stock_warehouse").select("sector").eq("ticker", ticker).execute()
+            if res.data and res.data[0]['sector']:
+                return res.data[0]['sector']
+        except Exception as e:
+            print(f"⚠️ 從中台讀取行業失敗 ({ticker}): {e}")
+            
+    # 備用方案：調用原 yfinance
     try:
-        response = supabase.table("market_sctr").select("sector").eq("ticker", ticker).execute()
-        if response.data:
-            return response.data[0]['sector']
+        ticker_obj = yf.Ticker(ticker)
+        info = ticker_obj.info
+        return info.get('sector', 'Unknown')
     except:
-        pass
-    return "Unknown"
+        return 'Unknown'
