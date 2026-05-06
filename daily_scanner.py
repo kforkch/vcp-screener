@@ -4,7 +4,40 @@ import requests
 import pandas as pd
 from datetime import datetime
 from data_loader import get_stock_list
-from analyzer import calculate_sctr_ranks, check_vcp_advanced
+from data_loader import get_stock_list, calculate_sctr_ranks, supabase
+
+# ==================== 核心 yfinance 攔截注入 ====================
+import yfinance as yf
+
+def mock_download(tickers, *args, **kwargs):
+    ticker = tickers[0] if isinstance(tickers, list) else tickers
+    try:
+        response = supabase.table("stock_klines")\
+            .select("date, open, high, low, close, volume")\
+            .eq("ticker", ticker)\
+            .order("date", ascending=True)\
+            .execute()
+        
+        data = response.data
+        if not data:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data)
+        df['date'] = pd.to_datetime(df['date'])
+        df.set_index('date', inplace=True)
+        df.rename(columns={
+            "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"
+        }, inplace=True)
+        return df
+    except Exception as e:
+        print(f"Mock Download 發生錯誤: {e}")
+        return pd.DataFrame()
+
+yf.download = mock_download
+# ===============================================================
+
+# 載入原分析器
+from analyzer import check_vcp_advanced
 
 # 從環境變數讀取
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
