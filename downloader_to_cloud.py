@@ -3,27 +3,27 @@ import pandas as pd
 import yfinance as yf
 from supabase import create_client
 
-# 從 GitHub Secrets 獲取連線資訊
+# 從 GitHub Secrets 中取得環境變數
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 
 if not url or not key:
-    raise ValueError("❌ 錯誤：未在環境變數中偵測到 SUPABASE_URL 或 SUPABASE_KEY。")
+    raise ValueError("❌ 錯誤：未在環境變數中偵測到 SUPABASE_URL 或 SUPABASE_KEY，請檢查 GitHub Secrets。")
 
 supabase = create_client(url, key)
 
 def get_and_upload(tickers):
-    print(f"🚀 開始同步 {len(tickers)} 檔標的至 Supabase 中台...")
+    print(f"🚀 開始同步 {len(tickers)} 檔標的至 Supabase 數據中台...")
     for t in tickers:
         try:
             tk = yf.Ticker(t)
-            # 抓取 250 天數據，保證足夠 analyzer.py 計算 SMA200 與波幅
+            # 抓取 250 天的 K 線數據
             df = tk.history(period="250d")
             if df.empty:
                 print(f"⚠️ {t} 無交易數據，跳過")
                 continue
             
-            # 1. 寫入 250 天日 K 線至 stock_klines 表
+            # 1. 整理並批次 Upsert 250 天的日 K 線至 stock_klines 表
             kline_list = []
             for date_idx, row in df.iterrows():
                 kline_list.append({
@@ -45,7 +45,7 @@ def get_and_upload(tickers):
             except:
                 sector = 'Unknown'
 
-            # 3. 寫入快照至你的 market_sctr 資料表
+            # 3. 更新快照數據至你的 market_sctr 資料表中 (以便前端與 scanner 呼叫)
             snapshot_data = {
                 "ticker": t,
                 "price": float(df['Close'].iloc[-1]),
@@ -54,9 +54,9 @@ def get_and_upload(tickers):
             }
             
             supabase.table("market_sctr").upsert(snapshot_data).execute()
-            print(f"✅ {t} 中台數據同步成功 (含 K 線及快照)")
+            print(f"✅ {t} 同步成功 (含 250 天 K 線與快照)")
         except Exception as e:
-            print(f"❌ {t} 同步發生錯誤: {e}")
+            print(f"❌ {t} 同步失敗: {e}")
 
 if __name__ == "__main__":
     from data_loader import get_stock_list
@@ -72,9 +72,9 @@ if __name__ == "__main__":
     # 去除重複
     all_tickers = list(set(all_tickers))
     
-    # 確保哪怕本地 text 檔案讀取失敗，也有基本的核心股票作同步
+    # 防禦降級機制：如果本地 data/ 下的文字檔還沒產生，使用核心名單，確保不會空轉崩潰
     if not all_tickers:
         all_tickers = ["AAPL", "MSFT", "GOOG", "0700.HK", "600519.SS"]
-        print(f"⚠️ 未能獲取全局名單，切換至基礎同步名單：{all_tickers}")
+        print(f"⚠️ 找不到市場名單，切換至基本同步清單：{all_tickers}")
         
     get_and_upload(all_tickers)
