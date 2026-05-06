@@ -12,24 +12,21 @@ jobs:
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v6  # 🚀 直接升級至原生支援 Node.js 24 的 v6 版本，徹底消除 Warning 警告
+      uses: actions/checkout@v4  # 使用穩定的 v4 
 
     - name: Set up Python
-      uses: actions/setup-python@v6  # 🚀 直接升級至原生支援 Node.js 24 的 v6 版本，徹底消除 Warning 警告
+      uses: actions/setup-python@v5  # 使用穩定的 v5
       with:
         python-version: '3.10'
-        cache: 'pip'
 
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        # 💡 安全防護：有些套件可能在 requirements.txt 中漏掉，這裡強制主動安裝，防止 ModuleNotFoundError 報錯
-        pip install -r requirements.txt
-        pip install supabase lxml pandas_ta openpyxl
+        # 💡 強制核心相依套件全手動安裝，防止 requirements.txt 內部版本衝突或格式錯誤
+        pip install pandas yfinance requests supabase lxml cryptography
 
     - name: Run Downloader to Cloud
       env:
-        # 將剛剛在 GitHub 儲存的 Secrets 注入到環境變數中
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       run: |
