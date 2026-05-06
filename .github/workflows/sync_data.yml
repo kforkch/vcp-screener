@@ -2,9 +2,9 @@ name: Daily Supabase Data Sync
 
 on:
   schedule:
-    # 每天 UTC 時間 09:30 運行 (約台北時間 17:30，港、中、美股市皆已收盤)
+    # 每天 UTC 時間 09:30 運行
     - cron: '30 9 * * *'
-  workflow_dispatch: # 允許你在 GitHub 網頁上手動點擊執行測試
+  workflow_dispatch: # 允許手動點擊執行
 
 jobs:
   sync:
@@ -12,24 +12,22 @@ jobs:
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v6  # 🚀 升級至 v6 (原生支援 Node.js 24，解決 @v4 警告)
+      uses: actions/checkout@v6  # 🚀 原生支援 Node.js 24
 
     - name: Set up Python
-      uses: actions/setup-python@v6  # 🚀 升級至 v6 (原生支援 Node.js 24，解決 @v5 警告)
+      uses: actions/setup-python@v6  # 🚀 原生支援 Node.js 24
       with:
-        python-version: '3.10'
+        python-version: '3.11'  # 🌟 關鍵修正：升級到 3.11 解決 pandas_ta 與 supabase 安裝衝突！
         cache: 'pip'
 
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        # 強制安裝與你專案相容的所有核心依賴，避免 ModuleNotFoundError
-        pip install -r requirements.txt
-        pip install supabase lxml pandas_ta openpyxl
+        # 直接指定安裝，避免 requirements.txt 中的舊版本限制干擾
+        pip install pandas yfinance requests supabase lxml cryptography pandas_ta openpyxl
 
     - name: Run Downloader to Cloud
       env:
-        # 將剛剛在 GitHub 儲存的 Secrets 注入到環境變數中
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       run: |
