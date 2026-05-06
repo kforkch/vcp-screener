@@ -1,10 +1,21 @@
-streamlit
-yfinance
-pandas
-pandas_ta
-requests
-lxml
-beautifulsoup4
-numpy
-supabase
-akshare
+# 基礎網頁與 UI 框架
+streamlit>=1.30.0
+
+# 數據取得 (美股、港股、A 股)
+yfinance>=0.2.38
+akshare>=1.18.50
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.1.0
+
+# 數據分析與指標計算
+pandas>=2.0.0
+numpy>=1.24.0
+pandas_ta>=0.3.14b0
+
+# 雲端資料庫中台
+supabase>=2.3.0
+cryptography>=42.0.0
+
+# 報告匯出與引擎
+openpyxl>=3.1.0
