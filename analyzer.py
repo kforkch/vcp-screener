@@ -20,7 +20,7 @@ def get_klines_from_supabase(tickers):
         res = supabase.table("stock_klines")\
             .select("ticker, date, open, high, low, close, volume")\
             .in_("ticker", tickers)\
-            .order("date", ascending=True)\
+            .order("date", desc=False)\
             .execute()
         
         if not res.data:
