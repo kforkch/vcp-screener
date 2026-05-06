@@ -3,7 +3,7 @@ import os
 import yfinance as yf
 from supabase import create_client
 
-# 從 GitHub Secrets 中取得環境變數
+# 從 GitHub Secrets 獲取連線資訊
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 
@@ -13,54 +13,33 @@ if not url or not key:
 supabase = create_client(url, key)
 
 def get_and_upload(tickers):
-    print(f"🚀 開始同步 {len(tickers)} 檔標的至 Supabase 數據中台...")
+    print(f"🚀 開始同步 {len(tickers)} 檔股票數據至 Supabase 數據中台...")
     for t in tickers:
         try:
             tk = yf.Ticker(t)
-            # 抓取 250 天歷史 K 線數據 (供 VCP 計算使用)
-            df = tk.history(period="250d")
+            df = tk.history(period="2y")
             if df.empty:
                 print(f"⚠️ {t} 無交易數據，跳過")
                 continue
             
-            # 1. 整理並批次 Upsert 日 K 線數據至 stock_klines 表
-            kline_list = []
-            for date_idx, row in df.iterrows():
-                kline_list.append({
-                    "ticker": t,
-                    "date": date_idx.strftime('%Y-%m-%d'),
-                    "open": float(row['Open']),
-                    "high": float(row['High']),
-                    "low": float(row['Low']),
-                    "close": float(row['Close']),
-                    "volume": int(row['Volume'])
-                })
-            
-            if kline_list:
-                supabase.table("stock_klines").upsert(kline_list).execute()
-
-            # 2. 獲取行業分類
-            try:
-                sector = tk.info.get('sector', 'Unknown')
-            except:
-                sector = 'Unknown'
-
-            # 3. 更新最新價格與快照至 market_sctr 表
-            snapshot_data = {
+            # 計算簡單的 SCTR 或 價格 
+            data = {
                 "ticker": t,
                 "price": float(df['Close'].iloc[-1]),
-                "sector": sector,
+                "sector": tk.info.get('sector', 'Unknown'),
                 "last_update": df.index[-1].strftime('%Y-%m-%d')
             }
             
-            supabase.table("market_sctr").upsert(snapshot_data).execute()
-            print(f"✅ {t} 中台同步成功 (含 250 天 K 線與快照)")
+            # Upsert 代表：若代碼存在則更新，不存在則新增
+            supabase.table("stock_warehouse").upsert(data).execute()
+            print(f"✅ {t} 同步成功")
         except Exception as e:
-            print(f"❌ {t} 同步失敗: {e}")
+            print(f"❌ {t} 失敗: {e}")
 
 if __name__ == "__main__":
     from data_loader import get_stock_list
     
+    # 整合你所有的市場股票名單
     all_tickers = []
     markets = ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)", "中國 A 股 (滬深 300 龍頭)"]
     
@@ -69,12 +48,12 @@ if __name__ == "__main__":
         if tickers:
             all_tickers.extend(tickers)
             
-    # 去除重複股票
-    all_tickers = list(set(all_tickers))
+    # 去除重複股票並排序
+    all_tickers = sorted(list(set(all_tickers)))
     
-    # 降級防護機制：如果本地資料夾沒有任何代碼，使用基本核心股票，確保不崩潰空轉
+    # 降級防護機制：如果本地 data/hsi.txt 等檔案尚未建立完全，則自動切換至基礎預設清單，確保不空轉崩潰
     if not all_tickers:
-        all_tickers = ["AAPL", "MSFT", "GOOG", "0700.HK", "600519.SS"]
-        print(f"⚠️ 未能獲取全市場清單，切換至基礎同步清單：{all_tickers}")
+        all_tickers = ["AAPL", "0700.HK", "600519.SS"]
+        print(f"⚠️ 未獲取到任何市場股票，改為執行預設同步名單: {all_tickers}")
         
     get_and_upload(all_tickers)
