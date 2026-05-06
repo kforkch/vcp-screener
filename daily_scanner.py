@@ -3,48 +3,71 @@ import os
 import requests
 import pandas as pd
 from datetime import datetime
-from data_loader import get_stock_list
-from data_loader import get_stock_list, calculate_sctr_ranks, supabase
 
-# ==================== 核心 yfinance 攔截注入 ====================
+# ==================== 核心：YFinance 零修改中台代理器 ====================
 import yfinance as yf
+from data_loader import supabase
 
-def mock_download(tickers, *args, **kwargs):
-    ticker = tickers[0] if isinstance(tickers, list) else tickers
-    try:
-        response = supabase.table("stock_klines")\
-            .select("date, open, high, low, close, volume")\
-            .eq("ticker", ticker)\
-            .order("date", ascending=True)\
-            .execute()
+class MockTicker:
+    """偽裝 yfinance 的 Ticker 對象"""
+    def __init__(self, ticker):
+        self.ticker = ticker
+        self._info = None
+
+    def history(self, *args, **kwargs):
+        """攔截 history() 請求，改由 Supabase 讀取日 K"""
+        if not supabase:
+            # 防禦機制：若中台連線失敗，則降級調用真實 yfinance
+            return yf.Ticker(self.ticker)._real_history(*args, **kwargs)
         
-        data = response.data
-        if not data:
+        try:
+            res = supabase.table("stock_klines")\
+                .select("date, open, high, low, close, volume")\
+                .eq("ticker", self.ticker)\
+                .order("date", ascending=True)\
+                .execute()
+            
+            if not res.data:
+                return pd.DataFrame()
+            
+            df = pd.DataFrame(res.data)
+            df['date'] = pd.to_datetime(df['date'])
+            df.set_index('date', inplace=True)
+            df.index.name = 'Date'
+            # 轉換為 yfinance 預期的欄位大寫格式
+            df.rename(columns={
+                "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"
+            }, inplace=True)
+            return df
+        except Exception as e:
+            print(f"⚠️ 代理讀取 K 線失敗 ({self.ticker}): {e}")
             return pd.DataFrame()
 
-        df = pd.DataFrame(data)
-        df['date'] = pd.to_datetime(df['date'])
-        df.set_index('date', inplace=True)
-        df.rename(columns={
-            "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"
-        }, inplace=True)
-        return df
-    except Exception as e:
-        print(f"Mock Download 發生錯誤: {e}")
-        return pd.DataFrame()
+    @property
+    def info(self):
+        """安全代理 info，優先從 Supabase 取得 sector"""
+        if not self._info:
+            try:
+                res = supabase.table("stock_warehouse").select("sector").eq("ticker", self.ticker).execute()
+                sector = res.data[0]['sector'] if res.data else 'Unknown'
+            except:
+                sector = 'Unknown'
+            self._info = {"sector": sector}
+        return self._info
 
-yf.download = mock_download
-# ===============================================================
+# 開始進行動態無痛劫持
+yf.Ticker._real_history = yf.Ticker.history # 保存原版方法作備用
+yf.Ticker = MockTicker                      # 將原生 Ticker 替換為我們的中台代理
+# =======================================================================
 
-# 載入原分析器
-from analyzer import check_vcp_advanced
+from data_loader import get_stock_list
+from analyzer import calculate_sctr_ranks, check_vcp_advanced
 
 # 從環境變數讀取
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 def make_link(t):
-    """為 Telegram 產生點擊連結"""
     t_str = str(t)
     if ".HK" in t_str:
         code = t_str.replace('.HK', '').lstrip('0')
@@ -57,7 +80,6 @@ def make_link(t):
         return f"https://www.tradingview.com/chart/?symbol={t_str.replace('.', '-')}"
 
 def send_telegram_alert(message):
-    """發送 HTML 格式訊息至 Telegram"""
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print("警告：未設定 Telegram Token 或 Chat ID")
         return
@@ -75,7 +97,6 @@ def send_telegram_alert(message):
         print(f"❌ 訊息發送失敗: {e}")
 
 def send_telegram_file(file_path):
-    """將 Excel 檔案透過 Telegram 發送"""
     if not TELEGRAM_TOKEN or not CHAT_ID:
         return
     
@@ -93,7 +114,6 @@ def send_telegram_file(file_path):
         print(f"❌ 發送檔案時發生錯誤: {e}")
 
 def run_global_scan():
-    """執行全市場掃描並整理報告與生成 Excel"""
     report_dir = "reports"
     if not os.path.exists(report_dir):
         os.makedirs(report_dir)
@@ -112,11 +132,11 @@ def run_global_scan():
         tickers, _ = get_stock_list(market)
         if not tickers: continue
         
-        # 獲取當前與 20 天前的歷史 SCTR 對照表
         sctr_map, sctr_hist_map = calculate_sctr_ranks(tickers, lookback=20)
         results = []
         
         for t in tickers:
+            # 這裡呼叫 check_vcp_advanced，它內部的 yfinance 將自動從 Supabase 取資料
             res = check_vcp_advanced(t, sctr_map, sctr_hist_map, b_only=False, b_days=20)
             if res:
                 results.append(res)
