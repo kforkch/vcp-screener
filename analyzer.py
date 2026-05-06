@@ -235,12 +235,13 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
 
         # ========== 6. 風險報酬 ==========
         pivot_point = recent_max
-        atr_val = ta.atr(high, low, close, length=14).iloc[-1]
         stop_loss = curr_p - (1.5 * atr_val)
-        target_price = curr_p + (3.0 * atr_val)
-        
-        industry = get_sector_cached(ticker)
-        dist_from_high = round(((h_52w - curr_p) / h_52w) * 100, 2)
+        target_price = curr_p + (3.0 * (curr_p - stop_loss))
+
+        dist_high = round((1 - curr_p / high52) * 100, 2)
+        vol_ratio = round(float(vol.iloc[-1]) / vol_ma20, 2)
+
+        sector = get_sector_cached(ticker)
 
         return [
             ticker, round(curr_p, 2), dist_high, sctr_val, is_tight,
