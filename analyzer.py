@@ -5,65 +5,13 @@ import pandas_ta as ta
 import numpy as np
 from data_loader import get_sector_cached
 
-# ==================== 🛠️ 數據中台無痛代理代理器 ====================
-def get_klines_from_supabase(tickers):
-    """
-    優先從 Supabase 中台的 stock_klines 資料表高速載入 K 線。
-    若載入失敗或無資料，會直接回傳 None，自動降級調用 yfinance。
-    """
-    try:
-        from data_loader import supabase
-        if supabase is None:
-            return None
-        
-        # 批次向 Supabase 查詢這群股票的 K 線資料
-        res = supabase.table("stock_klines")\
-            .select("ticker, date, open, high, low, close, volume")\
-            .in_("ticker", tickers)\
-            .order("date", desc=False)\
-            .execute()
-        
-        if not res.data:
-            return None
-            
-        df_all = pd.DataFrame(res.data)
-        df_all['date'] = pd.to_datetime(df_all['date'])
-        
-        # 重構為相容 yf.download(group_by='column') 格式的 MultiIndex 結構，確保後面完全不用改程式
-        pivoted_close = df_all.pivot(index='date', columns='ticker', values='close')
-        pivoted_open = df_all.pivot(index='date', columns='ticker', values='open')
-        pivoted_high = df_all.pivot(index='date', columns='ticker', values='high')
-        pivoted_low = df_all.pivot(index='date', columns='ticker', values='low')
-        pivoted_volume = df_all.pivot(index='date', columns='ticker', values='volume')
-        
-        # 建立 MultiIndex 欄位
-        pivoted_close.columns = pd.MultiIndex.from_product([['Close'], pivoted_close.columns])
-        pivoted_open.columns = pd.MultiIndex.from_product([['Open'], pivoted_open.columns])
-        pivoted_high.columns = pd.MultiIndex.from_product([['High'], pivoted_high.columns])
-        pivoted_low.columns = pd.MultiIndex.from_product([['Low'], pivoted_low.columns])
-        pivoted_volume.columns = pd.MultiIndex.from_product([['Volume'], pivoted_volume.columns])
-        
-        combined = pd.concat([pivoted_open, pivoted_high, pivoted_low, pivoted_close, pivoted_volume], axis=1)
-        combined.index.name = 'Date'
-        return combined
-    except Exception as e:
-        print(f"⚠️ 從中台讀取 K 線失敗，將自動降級採用原 yf.download: {e}")
-        return None
-# =======================================================================================
-
-
 def calculate_sctr_ranks(tickers, lookback=20):
     """
     計算當前與 lookback 天前的 SCTR，用來衡量動能是否持續攀升
     """
     try:
-        # ------------------ 🌟 劫持點：優先讀取 Supabase，失敗則使用 yf.download ------------------
-        raw_data = get_klines_from_supabase(tickers)
-        if raw_data is None or raw_data.empty:
-            # ⬇️ 這是你原本的下載代碼，完全保留 ⬇️
-            raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
-        # --------------------------------------------------------------------------------------
-        
+        # 下載 1 年 + lookback 天的數據
+        raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
         data = raw_data['Close'] if 'Close' in raw_data else raw_data
 
         sctr_current = []
@@ -74,7 +22,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
                 series = data[ticker].dropna() if isinstance(data, pd.DataFrame) else data.dropna()
                 if len(series) < 200 + lookback: continue
 
-                # 輔助計算函數 (你原本的邏輯，完全保留)
+                # 輔助計算函數
                 def get_sctr_raw(sub_series):
                     sma200, sma50 = sub_series.rolling(200).mean().iloc[-1], sub_series.rolling(50).mean().iloc[-1]
                     dist_200, dist_50 = (sub_series.iloc[-1]/sma200-1)*100, (sub_series.iloc[-1]/sma50-1)*100
@@ -105,20 +53,13 @@ def calculate_sctr_ranks(tickers, lookback=20):
     except:
         return {}, {}
 
-
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
     try:
-        # ------------------ 🌟 劫持點：優先讀取 Supabase，失敗則使用 yf.download ------------------
-        df = get_klines_from_supabase([ticker])
-        if df is None or df.empty:
-            # ⬇️ 這是你原本的下載代碼，完全保留 ⬇️
-            df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
-        # --------------------------------------------------------------------------------------
-        
+        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
         if df.empty or len(df) < 200:
             return None
 
-        # ---------- 資料解析 (完全保留你原本的邏輯) ----------
+        # ---------- 資料解析 ----------
         if isinstance(df.columns, pd.MultiIndex):
             close = df['Close'][ticker]
             high  = df['High'][ticker]
