@@ -8,19 +8,18 @@ import os
 # 核心安全機制：檢測當前是不是在 Streamlit 網頁端環境下執行
 try:
     import streamlit as st
-    # 測試 streamlit 是否處於可用的執行狀態
-    is_streamlit_env = True
+    # 測試 Streamlit 執行上下文是否可用
+    is_streamlit_env = hasattr(st, "runtime") and st.runtime.exists()
 except ImportError:
     is_streamlit_env = False
 
-# 自訂環境安全快取裝飾器：在網頁端啟用快取提升速度，在 Actions 背景端則當作普通函數執行
+# 自訂環境安全快取裝飾器
 def safe_cache(ttl=86400):
     def decorator(func):
         if is_streamlit_env:
             try:
                 return st.cache_data(ttl=ttl)(func)
             except Exception:
-                # 即使 import 成功，如果在 background 執行 st.cache_data 失敗，則 fallback 成原函數
                 return func
         return func
     return decorator
@@ -31,7 +30,6 @@ def load_tickers_from_file(filename):
     try:
         if os.path.exists(file_path):
             with open(file_path, 'r', encoding='utf-8') as f:
-                # 讀取每一行並去除空白字元，忽略空行
                 return [line.strip() for line in f if line.strip()]
         else:
             msg = f"檔案不存在: {file_path}"
