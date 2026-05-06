@@ -12,19 +12,21 @@ jobs:
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v6  # 🚀 原生支援 Node.js 24
+      uses: actions/checkout@v6  # 原生支援 Node.js 24
 
     - name: Set up Python
-      uses: actions/setup-python@v6  # 🚀 原生支援 Node.js 24
+      uses: actions/setup-python@v6  # 原生支援 Node.js 24
       with:
-        python-version: '3.11'  # 🌟 關鍵修正：升級到 3.11 解決 pandas_ta 與 supabase 安裝衝突！
+        python-version: '3.12'  # 🚀 升級到 3.12，完美相容 2026 年最新科學套件的 wheel
         cache: 'pip'
 
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        # 直接指定安裝，避免 requirements.txt 中的舊版本限制干擾
-        pip install pandas yfinance requests supabase lxml cryptography pandas_ta openpyxl
+        # 1. 先安裝基礎科學計算與核心套件
+        pip install pandas numpy requests supabase lxml cryptography openpyxl yfinance
+        # 2. 單獨安裝 pandas-ta (使用橫線，並確保相容性)
+        pip install pandas-ta
 
     - name: Run Downloader to Cloud
       env:
