@@ -1,16 +1,15 @@
 # downloader_to_cloud.py
 import os
 import yfinance as yf
+import pandas as pd
 
 def get_supabase_client():
-    """安全獲取 Supabase 用戶端，若未配置 Secrets 則優雅退出而不引發崩潰"""
+    """安全獲取 Supabase 用戶端"""
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
     
-    # 💡 關鍵防禦：先檢查變數是否為空！絕不傳入 None 給 create_client 避免致命崩潰
     if not url or not key or url == "" or key == "":
         print("⚠️ 警告：未在 GitHub Secrets 中設定 SUPABASE_URL 或 SUPABASE_KEY！")
-        print("💡 請至 GitHub 專案設定 -> Secrets and variables -> Actions 中新增此二項配置。")
         return None
         
     try:
@@ -35,22 +34,40 @@ def get_and_upload(tickers):
                 print(f"⚠️ {t} 無 K 線交易數據，跳過")
                 continue
             
-            # 準備數據
-            data = {
+            # ==================== 1. 同步最新狀態至 stock_warehouse ====================
+            warehouse_data = {
                 "ticker": t,
                 "price": float(df['Close'].iloc[-1]),
                 "sector": tk.info.get('sector', 'Unknown'),
                 "last_update": df.index[-1].strftime('%Y-%m-%d')
             }
+            supabase.table("stock_warehouse").upsert(warehouse_data).execute()
+            print(f"✅ {t} 最新狀態同步成功")
             
-            # 若代碼存在則更新，不存在則新增
-            supabase.table("stock_warehouse").upsert(data).execute()
-            print(f"✅ {t} 同步成功")
+            # ==================== 2. 同步完整 2 年歷史 K 線至 stock_backtest_data ====================
+            backtest_records = []
+            for date, row in df.iterrows():
+                backtest_records.append({
+                    "ticker": t,
+                    "date": date.strftime('%Y-%m-%d'),
+                    "open": float(row["Open"]),
+                    "high": float(row["High"]),
+                    "low": float(row["Low"]),
+                    "close": float(row["Close"]),
+                    "volume": int(row["Volume"])
+                })
+            
+            # 使用批次寫入 (Bulk Upsert)，每 500 筆打包一次，速度極快且不易出錯
+            chunk_size = 500
+            for i in range(0, len(backtest_records), chunk_size):
+                supabase.table("stock_backtest_data").upsert(backtest_records[i:i+chunk_size]).execute()
+            
+            print(f"📊 {t} 共 {len(backtest_records)} 筆歷史 K 線回測數據同步成功！")
+
         except Exception as e:
-            print(f"❌ {t} 同步過程中發生非致命錯誤: {e}")
+            print(f"❌ {t} 同步過程中發生錯誤: {e}")
 
 if __name__ == "__main__":
-    # 嘗試引入資料庫配置中的真實股票名單
     target_list = []
     try:
         from data_loader import get_stock_list
@@ -62,7 +79,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"⚠️ 自動載入市場清單時發生非致命異常 ({e})，降級使用核心測試清單。")
 
-    # 基礎防護清單，避免名單為空
     if not target_list:
         target_list = ["AAPL", "0700.HK", "600519.SS"] 
         
