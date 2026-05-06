@@ -2,7 +2,7 @@ name: Daily Supabase Data Sync
 
 on:
   schedule:
-    # 每天 UTC 時間 09:30 運行 (約為台北時間 17:30，美、港、中股市皆已收盤)
+    # 每天 UTC 時間 09:30 運行 (約台北時間 17:30，港、中、美股市皆已收盤)
     - cron: '30 9 * * *'
   workflow_dispatch: # 允許你在 GitHub 網頁上手動點擊執行測試
 
@@ -12,10 +12,10 @@ jobs:
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4  # 升級到支援 Node.js 24/20 的 v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5  # 升級到支援 Node.js 24/20 的 v5
       with:
         python-version: '3.10'
         cache: 'pip'
