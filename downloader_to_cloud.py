@@ -3,27 +3,27 @@ import pandas as pd
 import yfinance as yf
 from supabase import create_client
 
-# 從 GitHub Secrets 中取得環境變數
+# 從 GitHub Secrets 獲取連線資訊
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 
 if not url or not key:
-    raise ValueError("❌ 錯誤：未在環境變數中偵測到 SUPABASE_URL 或 SUPABASE_KEY，請檢查 GitHub Secrets 設定。")
+    raise ValueError("❌ 錯誤：未在 GitHub Secrets 偵測到 SUPABASE_URL 或 SUPABASE_KEY。")
 
 supabase = create_client(url, key)
 
 def get_and_upload(tickers):
-    print(f"🚀 開始同步 {len(tickers)} 檔標的至 Supabase 數據中台...")
+    print(f"🚀 開始將 {len(tickers)} 檔標的同步至 Supabase 數據中台...")
     for t in tickers:
         try:
             tk = yf.Ticker(t)
-            # 抓取 250 天歷史 K 線數據 (供 VCP 計算使用)
+            # 下載 250 天數據，完美供應 VCP 所需
             df = tk.history(period="250d")
             if df.empty:
-                print(f"⚠️ {t} 無交易數據，跳過")
+                print(f"⚠️ {t} 無交易歷史，跳過")
                 continue
             
-            # 1. 整理並 Upsert 日 K 線數據至 stock_klines 表
+            # 1. 寫入 K 線數據到 stock_klines
             kline_list = []
             for date_idx, row in df.iterrows():
                 kline_list.append({
@@ -39,13 +39,13 @@ def get_and_upload(tickers):
             if kline_list:
                 supabase.table("stock_klines").upsert(kline_list).execute()
 
-            # 2. 獲取行業分類
+            # 2. 取得行業分類
             try:
                 sector = tk.info.get('sector', 'Unknown')
             except:
                 sector = 'Unknown'
 
-            # 3. 更新最新價格與快照至你的 market_sctr 表
+            # 3. 寫入快照到 market_sctr
             snapshot_data = {
                 "ticker": t,
                 "price": float(df['Close'].iloc[-1]),
@@ -54,7 +54,7 @@ def get_and_upload(tickers):
             }
             
             supabase.table("market_sctr").upsert(snapshot_data).execute()
-            print(f"✅ {t} 中台同步成功 (含 250 天 K 線與快照)")
+            print(f"✅ {t} 同步成功 (K 線 + 快照已更新)")
         except Exception as e:
             print(f"❌ {t} 同步失敗: {e}")
 
@@ -69,12 +69,11 @@ if __name__ == "__main__":
         if tickers:
             all_tickers.extend(tickers)
             
-    # 去除重複股票
     all_tickers = list(set(all_tickers))
     
-    # 降級防護機制：如果本地 data/ 下的檔案還沒產生，使用基本核心股票，確保不崩潰空轉
+    # 備份降級名單（防止 data/ 文字檔尚未生成）
     if not all_tickers:
         all_tickers = ["AAPL", "MSFT", "GOOG", "0700.HK", "600519.SS"]
-        print(f"⚠️ 未能獲取全局市場清單，切換至基礎同步清單：{all_tickers}")
+        print(f"⚠️ 未能獲取全局名單，切換至基本同步名單：{all_tickers}")
         
     get_and_upload(all_tickers)
