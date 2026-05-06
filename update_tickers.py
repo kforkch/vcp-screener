@@ -1,82 +1,41 @@
-import pandas as pd
-import requests
-import io
-import os
-import re
+# .github/workflows/sync_data.yml
+name: Daily Supabase Data Sync
 
-def clean_and_format_ticker(raw_val, market_type):
-    """
-    清洗並格式化代碼：
-    1. 使用 Regex 去除所有非數字字元 (例如 'SSE: 600519' -> '600519')
-    2. 根據市場類型補足位數並加上正確後綴
-    """
-    raw_str = str(raw_val)
-    # 只保留數字
-    digits = re.sub(r'\D', '', raw_str)
-    
-    if not digits:
-        return None
+on:
+  schedule:
+    # 每天 UTC 時間 09:30 運行 (約台北時間 17:30，港、中、美股市皆已收盤)
+    - cron: '30 9 * * *'
+  workflow_dispatch: # 允許手動點擊執行測試
 
-    if market_type == 'HK':
-        # 港股：補齊 4 位數，加 .HK
-        return f"{digits.zfill(4)}.HK"
-    
-    elif market_type == 'CN':
-        # A股：補齊 6 位數，根據開頭決定 .SS 或 .SZ
-        digits = digits.zfill(6)
-        if digits.startswith('6'):
-            return f"{digits}.SS"
-        else:
-            return f"{digits}.SZ"
-    
-    return None
+jobs:
+  sync:
+    runs-on: ubuntu-latest
 
-def get_hsi_tickers():
-    url = "https://en.wikipedia.org/wiki/Hang_Seng_Index"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        response = requests.get(url, headers=headers)
-        tables = pd.read_html(io.StringIO(response.text))
-        for table in tables:
-            # 嘗試找 'Ticker' 或 'Code' 欄位
-            target_col = 'Ticker' if 'Ticker' in table.columns else 'Code'
-            if target_col in table.columns:
-                results = [clean_and_format_ticker(t, 'HK') for t in table[target_col]]
-                return [r for r in results if r]
-    except Exception as e:
-        print(f"Error fetching HSI: {e}")
-    return []
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-def get_csi300_tickers():
-    url = "https://en.wikipedia.org/wiki/CSI_300_Index"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        response = requests.get(url, headers=headers)
-        tables = pd.read_html(io.StringIO(response.text))
-        for table in tables:
-            target_col = 'Ticker' if 'Ticker' in table.columns else 'Code'
-            if target_col in table.columns:
-                results = [clean_and_format_ticker(t, 'CN') for t in table[target_col]]
-                return [r for r in results if r]
-    except Exception as e:
-        print(f"Error fetching CSI300: {e}")
-    return []
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
 
-def save_list_to_file(data_list, filepath):
-    # 去除重複值並排序
-    cleaned_data = sorted(list(set([d for d in data_list if d])))
-    if cleaned_data:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write("\n".join(cleaned_data))
-        print(f"成功更新 {filepath}: {len(cleaned_data)} 個代碼")
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # 強制安裝所有可能缺少的依賴庫，避免執行時 ImportError 導致 Exit Code 1
+        pip install supabase lxml pandas_ta openpyxl yfinance pandas requests
 
-def main():
-    os.makedirs('data', exist_ok=True)
-    hsi = get_hsi_tickers()
-    csi300 = get_csi300_tickers()
-    
-    save_list_to_file(hsi, 'data/hsi.txt')
-    save_list_to_file(csi300, 'data/csi300.txt')
+    - name: Ensure Data Directory and Tickers Exist
+      run: |
+        # 防禦性措施：建立 data 資料夾，並執行代碼更新腳本，確保 txt 檔案百分之百存在
+        mkdir -p data
+        python update_tickers.py
 
-if __name__ == "__main__":
-    main()
+    - name: Run Downloader to Cloud
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        python downloader_to_cloud.py
