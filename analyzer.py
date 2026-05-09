@@ -64,7 +64,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
 
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
     """
-    優化版 VCP 偵測：針對 NVDA 等超強動能股優化過濾條件
+    優化版 VCP 偵測：將收縮天數與突破過濾器邏輯完整整合，並適配大型股波動
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
@@ -98,66 +98,71 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         low52  = float(close.min())
         high52 = float(close.max())
 
-        # ========== 1. 趨勢模板 (SEPA 核心標準，適度放寬) ==========
+        # ========== 1. 趨勢模板 (SEPA 核心標準) ==========
         cond = [
             curr_p > sma150 and curr_p > sma200,                      
             sma150 > sma200,                                          
             sma50 > sma150 or (sma50 > sma200 and sma50 > sma150*0.98),
             curr_p > sma50 * 0.98,                                    
             curr_p >= low52 * 1.25,                                   # 脫離底部 25%
-            curr_p >= high52 * 0.70                                   # 回調放寬至 30% 以容納大波動領頭羊
+            curr_p >= high52 * 0.70                                   # 回調放寬至 30%
         ]
         if sum(cond) < 6: return None
 
-        # ========== 2. 成交量枯竭 (針對 NVDA 權值股微調) ==========
+        # ========== 2. 成交量枯竭 (Quiet Point) ==========
         vol_ma50 = vol.rolling(50).mean().iloc[-1]
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
-        # 安靜點回溯 20 日，比例放寬至 60%，以應對活躍標的
-        has_quiet_point = vol.iloc[-20:-1].min() < (vol_ma50 * 0.60)
+        # 針對大盤股特性：機構盤底時極端量縮少見，將安靜點放寬至均量的 85% 以下
+        has_quiet_point = vol.iloc[-max(10, b_days):-1].min() < (vol_ma50 * 0.85)
 
         # ========== 3. VCP 波動收縮判定 ==========
         def get_v(series): return (series.max() - series.min()) / series.min()
         v1 = get_v(close.iloc[-40:-20]) 
         v3 = get_v(close.iloc[-10:])    
-        # 核心收縮特徵：近期波幅 < 12% 且整體未擴張
-        is_contracting = v3 < 0.12 and v3 <= v1 * 1.1
+        # 核心收縮特徵：近期波幅放寬至 < 15% 且整體擴張不超過前波段的 1.25 倍
+        is_contracting = v3 < 0.15 and v3 <= v1 * 1.25
 
-        # ========== 4. 緊湊度與 ATR ==========
+        # ========== 4. 緊湊度與 ATR (UI 字串化處理) ==========
         atr = ta.atr(high, low, close, length=14).iloc[-1]
         w1_range = close.iloc[-5:].max() - close.iloc[-5:].min()
-        is_tight = w1_range <= 2.3 * atr # 適度容納強勢續航中的震盪
-
-        if not is_tight: return None
+        
+        # 放寬至 3.0 ATR 以容納大盤股的日內震盪洗盤，同時將布林值轉為字串解決 Streamlit 渲染問題
+        if w1_range <= 3.0 * atr:
+            contraction_status = "✅ 緊湊"
+        else:
+            return None
 
         # ========== 5. SCTR 動能核心 ==========
         sctr_val = round(sctr_map.get(ticker, 0), 1)
         sctr_hist = round(sctr_hist_map.get(ticker, 0), 1)
-        if sctr_val < 70: return None # 放寬至 70，避免在板塊輪動中誤刪龍頭
+        # S&P 500 大型股動能較溫和，將基礎閥值下調至 65
+        if sctr_val < 65: return None
 
-        # ========== 6. 狀態判定 ==========
-        # 阻力位取爆發前 b_days 區間 (動態應用 UI 參數)
+        # ========== 6. 狀態判定 (導入 b_days 參數) ==========
+        # 阻力位取爆發前 b_days 區間的最高價
         resistance = float(high.iloc[-(b_days+2):-2].max())
         dist_to_pivot = (curr_p / resistance - 1) * 100
         
         sma20 = ta.sma(close, 20).iloc[-1]
         is_on_trend = curr_p > sma20 * 0.99
 
-        if -1.5 <= dist_to_pivot <= 0.2:
+        # 判定標的所處階段
+        status = ""
+        if -1.8 <= dist_to_pivot <= 0.3:
             status = "⚡蓄勢待發(即將爆發)"
-        elif 0.2 < dist_to_pivot <= 6.0:
+        elif 0.3 < dist_to_pivot <= 6.0:
             status = "🔥 剛突破(仍具3R空間)"
-        # 🚀 強勢續航：針對 NVDA 這種超級龍頭，只要 SCTR > 90 或持續攀升，且股價貼合 20日線
         elif 6.0 < dist_to_pivot <= 15.0 and (sctr_val > 90 or sctr_val > sctr_hist) and is_on_trend:
             status = "🚀 強勢續航(動能領先)"
         else:
             return None
 
-        # 核心 VCP 要求：必須有過沈澱或波幅收縮
-        if not (has_quiet_point or is_contracting): return None
-
-        # 如果開啟「僅看突破」過濾器，排除其他狀態
+        # 執行 b_only 過濾：如果勾選「僅看突破」，排除非突破狀態標的
         if b_only and status != "🔥 剛突破(仍具3R空間)":
             return None
+
+        # 核心 VCP 要求：必須有過沈澱或波幅收縮
+        if not (has_quiet_point or is_contracting): return None
 
         # ========== 7. 風險報酬與輸出 ==========
         stop_loss = curr_p - (1.5 * atr)
@@ -166,8 +171,9 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         vol_ratio = round(float(vol.iloc[-1]) / vol_ma20, 2)
         sector = get_sector_cached(ticker)
 
+        # 輸出 contraction_status 取代原本的 is_tight 布林值
         return [
-            ticker, round(curr_p, 2), round((1-curr_p/high52)*100, 2), sctr_val, is_tight,
+            ticker, round(curr_p, 2), round((1-curr_p/high52)*100, 2), sctr_val, contraction_status,
             vol_ratio, status, sector,
             round(resistance, 2), round(stop_loss, 2), round(target_price, 2)
         ]
