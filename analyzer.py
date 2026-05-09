@@ -15,7 +15,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
-        # 🌟 透過 Bulk Download 一次性抓取所有股票資料，避免被 Yahoo 暫時封鎖[cite: 3]
+        # 🌟 透過 Bulk Download 一次性抓取所有股票資料，確保資料一致性[cite: 3]
         raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
         _GLOBAL_BULK_KLINE_CACHE = raw_data
         
@@ -30,7 +30,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
                 # 嚴格檢查：需要滿足 200日均線 + lookback[cite: 3]
                 if len(series) < 200 + lookback: continue
 
-                # 輔助計算函數 (SEPA 核心邏輯)[cite: 3]
+                # 輔助計算函數 (維持米奈爾維尼 SEPA 核心邏輯)[cite: 3]
                 def get_sctr_raw(sub_series):
                     sma200, sma50 = sub_series.rolling(200).mean().iloc[-1], sub_series.rolling(50).mean().iloc[-1]
                     dist_200, dist_50 = (sub_series.iloc[-1]/sma200-1)*100, (sub_series.iloc[-1]/sma50-1)*100
@@ -38,7 +38,6 @@ def calculate_sctr_ranks(tickers, lookback=20):
                     rsi = ta.rsi(sub_series, length=14).iloc[-1]
                     return (dist_200*0.3 + roc125*0.3) + (dist_50*0.15 + roc20*0.15) + (rsi*0.1)
 
-                # 計算最新與歷史的原始分數[cite: 3]
                 raw_curr = get_sctr_raw(series)
                 raw_hist = get_sctr_raw(series.iloc[:-lookback])
 
@@ -64,11 +63,10 @@ def calculate_sctr_ranks(tickers, lookback=20):
 
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
     """
-    優化版 VCP 偵測：同步保留蓄勢待發與剛突破標的，並放寬非核心參數以應對市場波動
+    優化版 VCP 偵測：同步保留蓄勢待發與剛突破標的，並擴大突破追蹤區間
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
-        # ------------------ 數據檢索優化[cite: 3] ------------------
         df = None
         from_cache = False
         
@@ -87,7 +85,6 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         
         if df.empty or len(df) < 200: return None
 
-        # ---------- 指標計算 ----------
         close = df['Close']
         high, low, vol = df['High'], df['Low'], df['Volume']
         curr_p = float(close.iloc[-1])
@@ -95,66 +92,62 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
         low52, high52 = float(close.min()), float(close.max())
 
-        # ========== 1. 趨勢模板過濾 (保留 100% 原始邏輯)[cite: 3] ==========
+        # ========== 1. 趨勢模板過濾 (保留 100% 核心參數)[cite: 3] ==========
         cond = [
             curr_p > sma150 and curr_p > sma200,                      
             sma150 > sma200,                                          
-            sma50 > sma150 or (sma50 > sma200 and sma50 > sma150 * 0.98), # 允許剛金叉的容錯[cite: 3]
+            sma50 > sma150 or (sma50 > sma200 and sma50 > sma150 * 0.98),
             curr_p > sma50 * 0.98,                                    
-            curr_p >= low52 * 1.20,                                   # 底部放寬至 20% 以應對洗盤[cite: 3]
-            curr_p >= high52 * 0.70                                   # 回調放寬至 30%[cite: 3]
+            curr_p >= low52 * 1.25,                                   # 脫離底部 25%[cite: 3]
+            curr_p >= high52 * 0.75                                   # 處於高位 25% 內[cite: 3]
         ]
         if sum(cond) < 6: return None
 
-        # ========== 2. VUD 成交量枯竭分析[cite: 3] ==========
+        # ========== 2. VUD 成交量枯竭 (優化：回溯歷史安靜點)[cite: 3] ==========
         vol_ma50 = vol.rolling(50).mean().iloc[-1]
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
-        
-        # 尋找近期是否出現過極度縮量（安靜點）[cite: 3]
-        has_quiet_point = vol.iloc[-20:].min() < (vol_ma50 * 0.55) # 稍微放寬窗口與比例[cite: 3]
+        # 尋找過去 15 天內是否出現過成交量低於均量 50% 的「安靜點」[cite: 3]
+        has_quiet_point = vol.iloc[-15:].min() < (vol_ma50 * 0.5)
 
-        # ========== 3. 波幅收縮判定[cite: 3] ==========
+        # ========== 3. VCP 波幅收縮判定[cite: 3] ==========
         def get_v(series): return (series.max() - series.min()) / series.min()
         v1 = get_v(close.iloc[-40:-20]) 
         v3 = get_v(close.iloc[-10:])    
-        
-        # 核心 VCP 特徵：波幅呈現收縮趨勢[cite: 3]
+        # 波幅收縮趨勢：近期波動必須小於早期波動且小於 12%[cite: 3]
         is_contracting = v1 > v3 and v3 < 0.12 
 
         # ========== 4. 緊湊度與 ATR 停損[cite: 3] ==========
         atr = ta.atr(high, low, close, length=14).iloc[-1]
         w1_range = float(close.iloc[-5:].max() - close.iloc[-5:].min())
         
-        # 緊湊度評級，超過 2.3*ATR 則過於鬆散[cite: 3]
         if w1_range <= 1.6 * atr: is_tight = "✅✅ 極緊"
-        elif w1_range <= 2.3 * atr: is_tight = "✅ 緊湊"
+        elif w1_range <= 2.2 * atr: is_tight = "✅ 緊湊"
         else: return None 
 
         # ========== 5. SCTR 動能核心[cite: 3] ==========
         sctr_val = sctr_map.get(ticker, 0)
         sctr_hist = sctr_hist_map.get(ticker, 0)
-        if sctr_val < 75: return None # 維持動能領先要求[cite: 3]
+        if sctr_val < 75: return None # SCTR 排名需領先[cite: 3]
 
-        # ========== 6. 突破狀態判定 ==========
+        # ========== 6. 狀態判定 (優化：擴大突破容錯範圍)[cite: 3, 4] ==========
         resistance = float(high.iloc[-20:-1].max())
         dist_to_pivot = (curr_p / resistance - 1) * 100
 
-        # 狀態分類：伏擊、突破、續航[cite: 3, 4]
         if -1.5 <= dist_to_pivot <= 0.5:
             status = "⚡蓄勢待發(即將爆發)"
-        elif 0.5 < dist_to_pivot <= 6.0:
+        elif 0.5 < dist_to_pivot <= 8.0: # 擴大至 8% 追蹤區間[cite: 3]
             status = "🔥 剛突破(仍具3R空間)"
-        elif 6.0 < dist_to_pivot <= 12.0 and sctr_val > sctr_hist:
+        elif 8.0 < dist_to_pivot <= 15.0 and sctr_val > sctr_hist:
             status = "🚀 強勢續航(動能領先)"
         else:
             return None
 
-        # 核心過濾：必須有過縮量或正處於明顯收縮中[cite: 3]
+        # 核心 VCP 特徵檢查[cite: 3]
         if not (has_quiet_point or is_contracting): return None
 
-        # ========== 7. 風險報酬與輸出[cite: 3] ==========
+        # ========== 7. 風險報酬與輸出 ==========
         stop_loss = curr_p - (1.5 * atr)
-        target_3r = curr_p + (3.0 * (curr_p - stop_loss))
+        target_3r = curr_p + (3.0 * (curr_p - stop_loss)) # 目標利潤設定為 3 倍風險[cite: 3]
 
         vol_ratio = round(float(vol.iloc[-1]) / vol_ma20, 2)
         sector = get_sector_cached(ticker)
