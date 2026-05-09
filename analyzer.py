@@ -122,12 +122,14 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         # 核心收縮特徵：近期波幅放寬至 < 15% 且整體擴張不超過前波段的 1.25 倍
         is_contracting = v3 < 0.15 and v3 <= v1 * 1.25
 
-        # ========== 4. 緊湊度與 ATR (UI 字串化處理) ==========
+        # ========== 4. 緊湊度與 ATR (分級呈現) ==========
         atr = ta.atr(high, low, close, length=14).iloc[-1]
         w1_range = close.iloc[-5:].max() - close.iloc[-5:].min()
         
-        # 放寬至 3.0 ATR 以容納大盤股的日內震盪洗盤，同時將布林值轉為字串解決 Streamlit 渲染問題
-        if w1_range <= 3.0 * atr:
+        # 細分緊湊等級：協助辨識最佳的樞軸點
+        if w1_range <= 1.5 * atr:
+            contraction_status = "🎯 極度緊湊"
+        elif w1_range <= 3.0 * atr:
             contraction_status = "✅ 緊湊"
         else:
             return None
@@ -171,7 +173,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         vol_ratio = round(float(vol.iloc[-1]) / vol_ma20, 2)
         sector = get_sector_cached(ticker)
 
-        # 輸出 contraction_status 取代原本的 is_tight 布林值
+        # 輸出 contraction_status 取代原本的 is_tight 變數
         return [
             ticker, round(curr_p, 2), round((1-curr_p/high52)*100, 2), sctr_val, contraction_status,
             vol_ratio, status, sector,
