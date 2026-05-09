@@ -26,7 +26,7 @@ def make_link(t):
 def send_telegram_alert(message):
     """發送 HTML 格式訊息至 Telegram"""
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("警告：未設定 Telegram Token 或 Chat ID")
+        print("⚠️ 警告：未設定 Telegram Token 或 Chat ID")
         return
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -37,12 +37,14 @@ def send_telegram_alert(message):
         "disable_web_page_preview": True
     }
     try:
-        requests.post(url, json=payload)
+        res = requests.post(url, json=payload)
+        if res.status_code != 200:
+            print(f"⚠️ 訊息發送狀態異常: {res.text}")
     except Exception as e:
         print(f"❌ 訊息發送失敗: {e}")
 
 def send_telegram_file(file_path):
-    """將 Excel 檔案透過 Telegram 發送"""
+    """將報告檔案透過 Telegram 發送"""
     if not TELEGRAM_TOKEN or not CHAT_ID:
         return
     
@@ -63,7 +65,11 @@ def run_global_scan():
     """執行全市場掃描並整理報告與生成 Excel"""
     report_dir = "reports"
     if not os.path.exists(report_dir):
-        os.makedirs(report_dir)
+        try:
+            os.makedirs(report_dir, exist_ok=True)
+        except Exception as e:
+            print(f"⚠️ 無法建立 reports 資料夾: {e}，改用當前目錄儲存")
+            report_dir = "."
 
     markets = ["美股 (Nasdaq 100)", "美股 (S&P 500)", "港股 (恒生指數)", "中國 A 股 (滬深 300 龍頭)"]
     report = "🏹 <b>VCP Alpha 每日決策終端</b>\n\n"
@@ -76,35 +82,49 @@ def run_global_scan():
     ]
     
     for market in markets:
-        tickers, _ = get_stock_list(market)
-        if not tickers: continue
-        
-        # 獲取當前與 20 天前的歷史 SCTR 對照表
-        sctr_map, sctr_hist_map = calculate_sctr_ranks(tickers, lookback=20)
-        results = []
-        
-        for t in tickers:
-            res = check_vcp_advanced(t, sctr_map, sctr_hist_map, b_only=False, b_days=20)
-            if res:
-                results.append(res)
-                all_results.append([market] + res)
-        
-        results.sort(key=lambda x: x[3], reverse=True)
-        
-        if results:
-            found_any = True
-            report += f"📊 <b>{market}</b> (篩選出 {len(results)} 檔)\n"
-            for r in results[:5]:
-                link = make_link(r[0])
-                report += f"• <b>{r[0]}</b> | <a href='{link}'>圖表</a> | SCTR: {r[3]} ({r[6]})\n"
-            report += "\n"
+        try:
+            tickers, _ = get_stock_list(market)
+            if not tickers: continue
+            
+            # 獲取當前與 20 天前的歷史 SCTR 對照表
+            sctr_map, sctr_hist_map = calculate_sctr_ranks(tickers, lookback=20)
+            results = []
+            
+            for t in tickers:
+                try:
+                    res = check_vcp_advanced(t, sctr_map, sctr_hist_map, b_only=False, b_days=20)
+                    if res:
+                        results.append(res)
+                        all_results.append([market] + res)
+                except Exception as e:
+                    print(f"⚠️ 掃描單檔股票 {t} 時發生錯誤: {e}")
+            
+            results.sort(key=lambda x: x[3], reverse=True)
+            
+            if results:
+                found_any = True
+                report += f"📊 <b>{market}</b> (篩選出 {len(results)} 檔)\n"
+                for r in results[:5]:
+                    link = make_link(r[0])
+                    report += f"• <b>{r[0]}</b> | <a href='{link}'>圖表</a> | SCTR: {r[3]} ({r[6]})\n"
+                report += "\n"
+        except Exception as e:
+            print(f"⚠️ 掃描市場 {market} 失敗: {e}")
     
     if found_any:
         df_full = pd.DataFrame(all_results, columns=["市場"] + columns)
-        filename = f"vcp_report_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
-        file_path = os.path.join(report_dir, filename)
+        date_str = datetime.now().strftime('%Y-%m-%d')
         
-        df_full.to_excel(file_path, index=False)
+        # 💡 防禦性寫入：優先導出 Excel，若缺少 openpyxl 庫則自動降級為 CSV
+        try:
+            filename = f"vcp_report_{date_str}.xlsx"
+            file_path = os.path.join(report_dir, filename)
+            df_full.to_excel(file_path, index=False)
+        except Exception as e:
+            print(f"⚠️ 無法導出 Excel ({e})，自動降級為 CSV 導出...")
+            filename = f"vcp_report_{date_str}.csv"
+            file_path = os.path.join(report_dir, filename)
+            df_full.to_csv(file_path, index=False, encoding='utf-8-sig')
         
         report += "📁 報告已生成，請參見下方附件。"
         send_telegram_alert(report)
