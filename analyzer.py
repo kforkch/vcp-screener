@@ -15,7 +15,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
-        # 🌟 透過 Bulk Download 一次性抓取所有股票資料，確保資料一致性並避免被 Ban[cite: 3]
+        # 🌟 透過 Bulk Download 一次性抓取所有股票資料[cite: 3]
         raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
         _GLOBAL_BULK_KLINE_CACHE = raw_data
         
@@ -30,7 +30,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
                 # 嚴格檢查：需要滿足 200日均線 + lookback[cite: 3]
                 if len(series) < 200 + lookback: continue
 
-                # 輔助計算函數 (維持米奈爾維尼 SEPA 核心邏輯)[cite: 3]
+                # 輔助計算函數 (核心邏輯 100% 保留)[cite: 3]
                 def get_sctr_raw(sub_series):
                     sma200, sma50 = sub_series.rolling(200).mean().iloc[-1], sub_series.rolling(50).mean().iloc[-1]
                     dist_200, dist_50 = (sub_series.iloc[-1]/sma200-1)*100, (sub_series.iloc[-1]/sma50-1)*100
@@ -38,6 +38,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
                     rsi = ta.rsi(sub_series, length=14).iloc[-1]
                     return (dist_200*0.3 + roc125*0.3) + (dist_50*0.15 + roc20*0.15) + (rsi*0.1)
 
+                # 計算最新與歷史的原始分數[cite: 3]
                 raw_curr = get_sctr_raw(series)
                 raw_hist = get_sctr_raw(series.iloc[:-lookback])
 
@@ -63,10 +64,11 @@ def calculate_sctr_ranks(tickers, lookback=20):
 
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
     """
-    優化版 VCP 偵測：修正阻力位參考點，精準區分蓄勢與突破狀態
+    優化版 VCP 偵測：強化「強勢續航」判定邏輯，確保捕捉動能領先股
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
+        # ------------------ 數據提取邏輯[cite: 3] ------------------
         df = None
         from_cache = False
         
@@ -89,73 +91,81 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         high, low, vol = df['High'], df['Low'], df['Volume']
         curr_p = float(close.iloc[-1])
 
-        sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
-        low52, high52 = float(close.min()), float(close.max())
+        # ========== 1. 趨勢模板 (SEPA 核心標準)[cite: 3] ==========
+        sma50  = ta.sma(close, 50).iloc[-1]
+        sma150 = ta.sma(close, 150).iloc[-1]
+        sma200 = ta.sma(close, 200).iloc[-1]
+        low52  = float(close.min())
+        high52 = float(close.max())
 
-        # ========== 1. 趨勢模板過濾 (維持核心 SEPA 標準)[cite: 3] ==========
         cond = [
             curr_p > sma150 and curr_p > sma200,                      
             sma150 > sma200,                                          
-            sma50 > sma150,
+            sma50 > sma150,                                           
             curr_p > sma50 * 0.98,                                    
             curr_p >= low52 * 1.25,                                   # 脫離底部區[cite: 3]
-            curr_p >= high52 * 0.75                                   # 高位盤整區[cite: 3]
+            curr_p >= high52 * 0.75                                   # 高位震盪區[cite: 3]
         ]
         if sum(cond) < 6: return None
 
-        # ========== 2. VUD 成交量枯竭 (擴大歷史回溯至 20 日)[cite: 3] ==========
+        # ========== 2. VUD 成交量枯竭 (20 日回溯)[cite: 3] ==========
         vol_ma50 = vol.rolling(50).mean().iloc[-1]
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
-        # 爆發前的安靜點檢查：確保股票曾經出現過籌碼沉澱[cite: 3]
+        # 曾經有過安靜點[cite: 3]
         has_quiet_point = vol.iloc[-20:-1].min() < (vol_ma50 * 0.55)
 
-        # ========== 3. VCP 波幅收縮判定[cite: 3] ==========
+        # ========== 3. VCP 波動收縮判定[cite: 3] ==========
         def get_v(series): return (series.max() - series.min()) / series.min()
         v1 = get_v(close.iloc[-40:-20]) 
         v3 = get_v(close.iloc[-10:])    
-        is_contracting = v1 > v3 and v3 < 0.12 # 確保波幅整體呈現收縮[cite: 3]
+        is_contracting = v1 > v3 and v3 < 0.12 # 波幅收縮特徵[cite: 3]
 
-        # ========== 4. 緊湊度與 ATR 停損[cite: 3] ==========
+        # ========== 4. 緊湊度與 ATR[cite: 3] ==========
         atr = ta.atr(high, low, close, length=14).iloc[-1]
-        w1_range = float(close.iloc[-5:].max() - close.iloc[-5:].min())
-        
-        if w1_range <= 1.6 * atr: is_tight = "✅✅ 極緊"
-        elif w1_range <= 2.2 * atr: is_tight = "✅ 緊湊"
-        else: return None 
+        w1_range = close.iloc[-5:].max() - close.iloc[-5:].min()
+        is_tight = w1_range <= 2.3 * atr # 適度放寬緊湊度以應對續航中的波動[cite: 3]
+
+        if not is_tight: return None
 
         # ========== 5. SCTR 動能核心[cite: 3] ==========
         sctr_val = sctr_map.get(ticker, 0)
         sctr_hist = sctr_hist_map.get(ticker, 0)
         if sctr_val < 75: return None 
 
-        # ========== 6. 狀態判定 (精準區分閥值) ==========
-        # 核心優化：避開最後兩日，尋找真正的「盤整區天花板」[cite: 3]
+        # ========== 6. 狀態判定 (邏輯強化) ==========
+        # 阻力位回溯，避開當前爆發區[cite: 3]
         resistance = float(high.iloc[-22:-2].max())
         dist_to_pivot = (curr_p / resistance - 1) * 100
+
+        # 短期均線支撐檢查 (強勢股通常不破 20日線)[cite: 3]
+        sma20 = ta.sma(close, 20).iloc[-1]
+        is_on_trend = curr_p > sma20 * 0.99
 
         if -1.5 <= dist_to_pivot <= 0.2:
             status = "⚡蓄勢待發(即將爆發)"
         elif 0.2 < dist_to_pivot <= 6.0:
             status = "🔥 剛突破(仍具3R空間)"
-        elif 6.0 < dist_to_pivot <= 12.0 and sctr_val > sctr_hist:
+        # 🚀 優化判定：動能持續高位 (SCTR > 90) 或 動能在攀升，且漲幅在 15% 以內並站穩均線[cite: 3, 4]
+        elif 6.0 < dist_to_pivot <= 15.0 and (sctr_val > 90 or sctr_val > sctr_hist) and is_on_trend:
             status = "🚀 強勢續航(動能領先)"
         else:
             return None
 
-        # 核心 VCP 特徵檢查[cite: 3]
+        # 核心 VCP 特徵過濾[cite: 3]
         if not (has_quiet_point or is_contracting): return None
 
         # ========== 7. 風險報酬與輸出[cite: 3] ==========
         stop_loss = curr_p - (1.5 * atr)
-        target_3r = curr_p + (3.0 * (curr_p - stop_loss))
+        target_price = curr_p + (3.0 * (curr_p - stop_loss))
 
         vol_ratio = round(float(vol.iloc[-1]) / vol_ma20, 2)
         sector = get_sector_cached(ticker)
 
         return [
-            ticker, round(curr_p, 2), round((1 - curr_p/high52)*100, 2), 
-            round(sctr_val, 1), is_tight, vol_ratio, status, sector,
-            round(resistance, 2), round(stop_loss, 2), round(target_3r, 2)
+            ticker, round(curr_p, 2), round((1-curr_p/high52)*100, 2), round(sctr_val, 1),
+            "✅ 極緊" if w1_range <= 1.6*atr else "✅ 緊湊",
+            vol_ratio, status, sector,
+            round(resistance, 2), round(stop_loss, 2), round(target_price, 2)
         ]
 
     except Exception:
