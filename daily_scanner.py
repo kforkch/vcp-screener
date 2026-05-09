@@ -3,6 +3,7 @@ import os
 import requests
 import pandas as pd
 from datetime import datetime
+import concurrent.futures
 from data_loader import get_stock_list
 from analyzer import calculate_sctr_ranks, check_vcp_advanced
 
@@ -61,6 +62,15 @@ def send_telegram_file(file_path):
     except Exception as e:
         print(f"❌ 發送檔案時發生錯誤: {e}")
 
+def process_single_ticker(t, sctr_map, sctr_hist_map):
+    """獨立的工作節點函數：供多執行緒調用以執行單檔股票的 VCP 檢測"""
+    try:
+        res = check_vcp_advanced(t, sctr_map, sctr_hist_map, b_only=False, b_days=20)
+        return res
+    except Exception as e:
+        print(f"⚠️ 掃描單檔股票 {t} 時發生錯誤: {e}")
+        return None
+
 def run_global_scan():
     """執行全市場掃描並整理報告與生成 Excel"""
     report_dir = "reports"
@@ -90,14 +100,22 @@ def run_global_scan():
             sctr_map, sctr_hist_map = calculate_sctr_ranks(tickers, lookback=20)
             results = []
             
-            for t in tickers:
-                try:
-                    res = check_vcp_advanced(t, sctr_map, sctr_hist_map, b_only=False, b_days=20)
+            print(f"🚀 開始並行掃描 {market} ({len(tickers)} 檔)...")
+            
+            # 💡 優化：啟動 10 個執行緒進行並行掃描，大幅壓榨 I/O 與 CPU 效能
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                # 提交所有任務
+                future_to_ticker = {
+                    executor.submit(process_single_ticker, t, sctr_map, sctr_hist_map): t 
+                    for t in tickers
+                }
+                
+                # 收集完成的結果
+                for future in concurrent.futures.as_completed(future_to_ticker):
+                    res = future.result()
                     if res:
                         results.append(res)
                         all_results.append([market] + res)
-                except Exception as e:
-                    print(f"⚠️ 掃描單檔股票 {t} 時發生錯誤: {e}")
             
             results.sort(key=lambda x: x[3], reverse=True)
             
