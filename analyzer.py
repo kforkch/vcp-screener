@@ -15,7 +15,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
-        # 🌟 透過 Bulk Download 一次性抓取所有股票資料，並快取至記憶體中
+        # 🌟 透過 Bulk Download 一次性抓取所有股票資料
         raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
         _GLOBAL_BULK_KLINE_CACHE = raw_data
         
@@ -30,7 +30,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
                 # 嚴格檢查：需要滿足 200日均線 + lookback
                 if len(series) < 200 + lookback: continue
 
-                # 輔助計算函數 (核心邏輯 100% 保留)
+                # 輔助計算函數 (核心邏輯 100% 保留)[cite: 3]
                 def get_sctr_raw(sub_series):
                     sma200, sma50 = sub_series.rolling(200).mean().iloc[-1], sub_series.rolling(50).mean().iloc[-1]
                     dist_200, dist_50 = (sub_series.iloc[-1]/sma200-1)*100, (sub_series.iloc[-1]/sma50-1)*100
@@ -38,7 +38,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
                     rsi = ta.rsi(sub_series, length=14).iloc[-1]
                     return (dist_200*0.3 + roc125*0.3) + (dist_50*0.15 + roc20*0.15) + (rsi*0.1)
 
-                # 計算最新與歷史的原始分數
+                # 計算最新與歷史的原始分數[cite: 3]
                 raw_curr = get_sctr_raw(series)
                 raw_hist = get_sctr_raw(series.iloc[:-lookback])
 
@@ -65,166 +65,105 @@ def calculate_sctr_ranks(tickers, lookback=20):
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
     global _GLOBAL_BULK_KLINE_CACHE
     try:
-        # ------------------ 🌟 終極架構優化：從 RAM 中切片提取數據，實現 0 網路請求 ------------------
+        # ------------------ 🌟 數據提取邏輯 (維持 0 網路請求)[cite: 3] ------------------
         df = None
         from_cache = False
         
         if _GLOBAL_BULK_KLINE_CACHE is not None and not _GLOBAL_BULK_KLINE_CACHE.empty:
             if isinstance(_GLOBAL_BULK_KLINE_CACHE.columns, pd.MultiIndex):
                 if ticker in _GLOBAL_BULK_KLINE_CACHE.columns.get_level_values(1):
-                    # 使用 cross-section (xs) 提取該股票資料，並剃除因不同市場休市產生的全空列 (NaN)
                     df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=1, axis=1).dropna(how='all')
                     from_cache = True
             else:
                 df = _GLOBAL_BULK_KLINE_CACHE.dropna(how='all')
                 from_cache = True
         
-        # 若快取中沒有該股資料（例如程式異常重啟），則啟動單兵下載保護機制
         if not from_cache or df is None or df.empty:
-            time.sleep(0.5)  # 強制降速，避免再次被 Ban
+            time.sleep(0.5) 
             df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
-        # --------------------------------------------------------------------------------------
         
         if df.empty or len(df) < 200:
             return None
 
-        # ---------- 資料解析 ----------
-        # 因為 .xs() 已經將 MultiIndex 降維，或是單檔下載本來就沒 MultiIndex
-        if isinstance(df.columns, pd.MultiIndex):
-            close = df['Close'][ticker]
-            high  = df['High'][ticker]
-            low   = df['Low'][ticker]
-            vol   = df['Volume'][ticker]
-        else:
-            close = df['Close']
-            high  = df['High']
-            low   = df['Low']
-            vol   = df['Volume']
-
+        close = df['Close']
+        high, low, vol = df['High'], df['Low'], df['Volume']
         curr_p = float(close.iloc[-1])
 
-        # ---------- 均線 ----------
+        # ========== 1. 趨勢模板 (Minervini SEPA 標準)[cite: 3] ==========
         sma50  = ta.sma(close, 50).iloc[-1]
         sma150 = ta.sma(close, 150).iloc[-1]
         sma200 = ta.sma(close, 200).iloc[-1]
         low52  = float(close.min())
         high52 = float(close.max())
 
-        # ========== 1. 趨勢模板（放寬至 5 項及格） ==========
         cond = [
-            curr_p > sma150 and curr_p > sma200,                      # 中期趨勢向上
-            sma150 > sma200,                                          # 長線多頭排列
-            sma50 > sma150 or (sma50 > sma200 and sma50 > sma150*0.98),  # 剛金叉可接受
-            curr_p > sma50 or curr_p > sma50*0.98,                    # 容錯
-            curr_p >= low52 * 1.2,                                    # 底部放寬
-            curr_p >= high52 * 0.65                                   # 回調 35% 以內接受
+            curr_p > sma150 and curr_p > sma200,                      # 中期趨勢向上[cite: 3]
+            sma150 > sma200,                                          # 長線多頭排列[cite: 3]
+            sma50 > sma150,                                           # 中長線排列[cite: 3]
+            curr_p > sma50,                                           # 股價位於 50 日均線上[cite: 3]
+            curr_p >= low52 * 1.25,                                   # 脫離底部 25%[cite: 3]
+            curr_p >= high52 * 0.75                                   # 位於高位 25% 內[cite: 3]
         ]
-        if sum(cond) < 6:
-            return None
+        if sum(cond) < 6: return None
 
-        # ========== 2. 成交量萎縮（VUD 深度解析） ==========
-        vol_ma20 = vol.rolling(20).mean().iloc[-1]
-        vol_ma50 = vol.rolling(50).mean().iloc[-1] if len(vol) >= 50 else vol_ma20
+        # ========== 2. 成交量極限枯竭偵測 (VUD)[cite: 3] ==========
+        vol_ma50 = vol.rolling(50).mean().iloc[-1]
+        recent_vol_5d = vol.iloc[-5:].mean()
+        # 允許正在突破時量能放大，但蓄勢期必須有過縮量[cite: 3]
+        has_vud_history = (vol.iloc[-15:-1].min() < vol_ma50 * 0.5) 
+
+        if not has_vud_history: return None
+
+        # ========== 3. VCP 波動收縮判定[cite: 3] ==========
+        def get_v(series): return (series.max() - series.min()) / series.min()
+        v1 = get_v(close.iloc[-40:-20]) 
+        v2 = get_v(close.iloc[-20:-10]) 
+        v3 = get_v(close.iloc[-10:])    
         
-        recent_vol = vol.iloc[-15:] 
-        recent_vol_avg = recent_vol.mean()
+        is_contracting = v1 > v3 and v3 < 0.10 # 確保整體波幅在收縮且近期小於 10%[cite: 3]
 
-        # 條件 A: 整體籌碼沉澱
-        vol_dry_up = (recent_vol_avg < vol_ma20 * 0.85) or (vol_ma20 < vol_ma50 * 0.9)
-        
-        # 條件 B: VUD 安靜點偵測 (嚴格要求至少一天低於 50 日均量的 55%)
-        lowest_vol_recent = float(recent_vol.min())
-        has_quiet_pivot = lowest_vol_recent < (vol_ma50 * 0.55)
+        # ========== 4. 緊湊度與 ATR[cite: 3] ==========
+        atr = ta.atr(high, low, close, length=14).iloc[-1]
+        w1_range = close.iloc[-5:].max() - close.iloc[-5:].min()
+        is_tight = w1_range <= 2.2 * atr
 
-        if not (vol_dry_up and has_quiet_pivot):
-            return None
+        if not is_tight: return None
 
-        # ========== 3. VCP 波動收縮（區間低點邏輯） ==========
-        windows = [
-            close.iloc[-100:-70],
-            close.iloc[-85:-55],
-            close.iloc[-70:-40],
-            close.iloc[-55:-25],
-            close.iloc[-40:-15]
-        ]
+        # ========== 5. SCTR 動能要求[cite: 3] ==========
+        sctr_val = sctr_map.get(ticker, 0)
+        sctr_hist = sctr_hist_map.get(ticker, 0)
+        if sctr_val < 75: return None # SCTR 必須處於高位[cite: 3]
 
-        ranges = []
-        for w in windows:
-            if len(w) >= 4:
-                r = (w.max() - w.min()) / w.min()
-                ranges.append(r)
-            else:
-                ranges.append(ranges[-1] if ranges else 0.25)
+        # ========== 6. 狀態判定：保留蓄勢與剛突破 ==========
+        # 尋找過去 20 天的最高價作為阻力位 (Pivot)[cite: 3]
+        resistance = float(high.iloc[-20:-1].max())
+        dist_to_pivot = (curr_p / resistance - 1) * 100
 
-        valid_ranges = [r for r in ranges if r > 0]
-        if len(valid_ranges) < 2:
-            return None
-
-        # 檢查最後一段波動率是否仍處於低檔
-        if len(valid_ranges) >= 3:
-            last_three = valid_ranges[-3:]
-            if valid_ranges[-1] > min(last_three) * 1.1 and valid_ranges[-1] > 0.03:
-                return None
-
-        # ---------- ATR 與緊密度 ----------
-        atr_series = ta.atr(high, low, close, length=14)
-        atr_val = float(atr_series.iloc[-1]) if not atr_series.isna().iloc[-1] else (float(high.iloc[-1]) - float(low.iloc[-1]))
-
-        w1 = close.iloc[-5:]
-        w1_abs_range = float(w1.max() - w1.min())
-        w1_pct = (w1.max() - w1.min()) / w1.min() if w1.min() > 0 else 1
-
-        if w1_abs_range <= 1.6 * atr_val and w1_pct <= 0.12:
-            is_tight = "✅✅ 極緊"
-        elif w1_abs_range <= 2.0 * atr_val and w1_pct <= 0.15:
-            is_tight = "✅ 緊湊"
-        elif w1_abs_range <= 2.3 * atr_val and w1_pct <= 0.18:
-            is_tight = "🔸 尚可"
+        # 分類邏輯：
+        # 1. 預發射：股價在阻力下方 1.5% 內蓄勢[cite: 3]
+        if -1.5 <= dist_to_pivot <= 0.5:
+            status = "⚡預發射(即將爆發)"
+        # 2. 剛突破：突破阻力但在 5% 漲幅內，仍有 2-3R 空間[cite: 3]
+        elif 0.5 < dist_to_pivot <= 5.0:
+            status = "🔥 剛突破(2-3R空間)"
+        # 3. 強勢續航：突破超過 5%，但在 SCTR 加速中[cite: 3]
+        elif 5.0 < dist_to_pivot <= 10.0 and sctr_val > sctr_hist:
+            status = "🚀 強勢續航"
         else:
             return None
 
-        # ========== 4. SCTR 動能 ==========
-        sctr_val = round(sctr_map.get(ticker, 0), 1)
-        sctr_hist = round(sctr_hist_map.get(ticker, 0), 1)
-        if sctr_val < 70:
-            return None
-        sctr_accelerating = (sctr_val - sctr_hist) > 1.5
-        if not sctr_accelerating and sctr_val < 80:
-            return None
+        # ========== 7. 風險報酬計算[cite: 3] ==========
+        stop_loss = curr_p - (1.5 * atr)
+        target_price = curr_p + (3.0 * (curr_p - stop_loss)) # 預設 3R 目標[cite: 3]
 
-        # ========== 5. 突破／預突破狀態 ==========
-        recent_max = float(close.iloc[-(b_days+1):-1].max())
-        is_breakout = curr_p > recent_max
-
-        resistance = float(high.iloc[-16:-1].max())
-        distance_to_res = round((resistance / curr_p - 1) * 100, 2)
-
-        pre_breakout = (not is_breakout) and (distance_to_res < 1.5) and ("極緊" in is_tight)
-
-        if b_only and not (is_breakout or pre_breakout):
-            return None
-
-        if is_breakout:
-            status = f"🔥 {b_days}D突破"
-        elif pre_breakout:
-            status = f"⚡蓄勢待發(距突破{distance_to_res}%)"
-        else:
-            status = "🚀 強勢向上"
-
-        # ========== 6. 風險報酬 ==========
-        pivot_point = recent_max
-        stop_loss = curr_p - (1.5 * atr_val)
-        target_price = curr_p + (3.0 * (curr_p - stop_loss))
-
-        dist_high = round((1 - curr_p / high52) * 100, 2)
-        vol_ratio = round(float(vol.iloc[-1]) / vol_ma20, 2)
-
+        vol_ratio = round(float(vol.iloc[-1]) / vol_ma50, 2)
         sector = get_sector_cached(ticker)
 
         return [
-            ticker, round(curr_p, 2), dist_high, sctr_val, is_tight,
+            ticker, round(curr_p, 2), round((1-curr_p/high52)*100,2), round(sctr_val, 1),
+            "✅ 極緊" if w1_range <= 1.6*atr else "✅ 緊湊",
             vol_ratio, status, sector,
-            round(pivot_point, 2), round(stop_loss, 2), round(target_price, 2)
+            round(resistance, 2), round(stop_loss, 2), round(target_price, 2)
         ]
 
     except Exception:
