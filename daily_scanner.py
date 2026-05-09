@@ -4,6 +4,7 @@ import requests
 import pandas as pd
 from datetime import datetime
 import concurrent.futures
+from collections import Counter
 from data_loader import get_stock_list
 from analyzer import calculate_sctr_ranks, check_vcp_advanced
 
@@ -121,7 +122,13 @@ def run_global_scan():
             
             if results:
                 found_any = True
-                report += f"📊 <b>{market}</b> (篩選出 {len(results)} 檔)\n"
+                
+                # 💡 優化增強：動態統計資金流入的強勢板塊 (Top-Down Sector Analysis)
+                sectors = [r[7] for r in results if r[7] and r[7] != '未知板塊']
+                top_sectors = [s[0] for s in Counter(sectors).most_common(2)]
+                sector_badge = f" | 🔥 領漲板塊: {', '.join(top_sectors)}" if top_sectors else ""
+                
+                report += f"📊 <b>{market}</b> (篩出 {len(results)} 檔{sector_badge})\n"
                 for r in results[:5]:
                     link = make_link(r[0])
                     # 💡 增加輸出的詳細程度，顯示實戰所需的 Pivot、停損與價量資訊
