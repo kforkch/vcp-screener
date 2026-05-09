@@ -3,15 +3,21 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
+import time
 from data_loader import get_sector_cached
+
+# 🌟 建立全局快取變數，用於儲存批量下載的 K 線，徹底迴避 Rate Limit
+_GLOBAL_BULK_KLINE_CACHE = None
 
 def calculate_sctr_ranks(tickers, lookback=20):
     """
     計算當前與 lookback 天前的 SCTR，用來衡量動能是否持續攀升
     """
+    global _GLOBAL_BULK_KLINE_CACHE
     try:
-        # 🌟 終極架構優化：徹底解耦 Supabase 讀取，全面回歸 yfinance 實時拉取，根除 Timeout 問題
+        # 🌟 透過 Bulk Download 一次性抓取所有股票資料，並快取至記憶體中
         raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
+        _GLOBAL_BULK_KLINE_CACHE = raw_data
         
         data = raw_data['Close'] if 'Close' in raw_data else raw_data
 
@@ -57,14 +63,33 @@ def calculate_sctr_ranks(tickers, lookback=20):
 
 
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
+    global _GLOBAL_BULK_KLINE_CACHE
     try:
-        # 🌟 終極架構優化：單檔股票檢驗亦全面使用 yfinance
-        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+        # ------------------ 🌟 終極架構優化：從 RAM 中切片提取數據，實現 0 網路請求 ------------------
+        df = None
+        from_cache = False
+        
+        if _GLOBAL_BULK_KLINE_CACHE is not None and not _GLOBAL_BULK_KLINE_CACHE.empty:
+            if isinstance(_GLOBAL_BULK_KLINE_CACHE.columns, pd.MultiIndex):
+                if ticker in _GLOBAL_BULK_KLINE_CACHE.columns.get_level_values(1):
+                    # 使用 cross-section (xs) 提取該股票資料，並剃除因不同市場休市產生的全空列 (NaN)
+                    df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=1, axis=1).dropna(how='all')
+                    from_cache = True
+            else:
+                df = _GLOBAL_BULK_KLINE_CACHE.dropna(how='all')
+                from_cache = True
+        
+        # 若快取中沒有該股資料（例如程式異常重啟），則啟動單兵下載保護機制
+        if not from_cache or df is None or df.empty:
+            time.sleep(0.5)  # 強制降速，避免再次被 Ban
+            df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+        # --------------------------------------------------------------------------------------
         
         if df.empty or len(df) < 200:
             return None
 
         # ---------- 資料解析 ----------
+        # 因為 .xs() 已經將 MultiIndex 降維，或是單檔下載本來就沒 MultiIndex
         if isinstance(df.columns, pd.MultiIndex):
             close = df['Close'][ticker]
             high  = df['High'][ticker]
