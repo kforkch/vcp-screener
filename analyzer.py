@@ -9,24 +9,33 @@ from data_loader import get_sector_cached
 def get_klines_from_supabase(tickers):
     """
     優先從 Supabase 中台的 stock_klines 資料表高速載入 K 線。
-    若載入失敗或無資料，會直接回傳 None，自動降級調用 yfinance。
+    加入「分批檢索 (Chunking)」機制，解決 Warp server timeout 錯誤。
     """
     try:
         from data_loader import supabase
         if supabase is None:
             return None
         
-        # 批次向 Supabase 查詢這群股票的 K 線資料
-        res = supabase.table("stock_klines")\
-            .select("ticker, date, open, high, low, close, volume")\
-            .in_("ticker", tickers)\
-            .order("date", desc=False)\
-            .execute()
+        all_data = []
+        chunk_size = 50  # 🌟 優化點：將數百檔股票切分為每批 50 檔，避免伺服器超時
         
-        if not res.data:
+        for i in range(0, len(tickers), chunk_size):
+            chunk = tickers[i:i + chunk_size]
+            
+            # 批次向 Supabase 查詢這群股票的 K 線資料
+            res = supabase.table("stock_klines")\
+                .select("ticker, date, open, high, low, close, volume")\
+                .in_("ticker", chunk)\
+                .order("date", desc=False)\
+                .execute()
+            
+            if res.data:
+                all_data.extend(res.data)
+                
+        if not all_data:
             return None
             
-        df_all = pd.DataFrame(res.data)
+        df_all = pd.DataFrame(all_data)
         df_all['date'] = pd.to_datetime(df_all['date'])
         
         # 重構為相容 yf.download(group_by='column') 格式的 MultiIndex 結構，確保後面完全不用改程式
@@ -60,7 +69,6 @@ def calculate_sctr_ranks(tickers, lookback=20):
         # ------------------ 🌟 劫持點：優先讀取 Supabase，失敗則使用 yf.download ------------------
         raw_data = get_klines_from_supabase(tickers)
         if raw_data is None or raw_data.empty:
-            # ⬇️ 這是你原本的下載代碼，完全保留 ⬇️
             raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
         # --------------------------------------------------------------------------------------
         
@@ -74,7 +82,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
                 series = data[ticker].dropna() if isinstance(data, pd.DataFrame) else data.dropna()
                 if len(series) < 200 + lookback: continue
 
-                # 輔助計算函數 (你原本的邏輯，完全保留)
+                # 輔助計算函數 (完全保留邏輯)
                 def get_sctr_raw(sub_series):
                     sma200, sma50 = sub_series.rolling(200).mean().iloc[-1], sub_series.rolling(50).mean().iloc[-1]
                     dist_200, dist_50 = (sub_series.iloc[-1]/sma200-1)*100, (sub_series.iloc[-1]/sma50-1)*100
@@ -111,14 +119,13 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         # ------------------ 🌟 劫持點：優先讀取 Supabase，失敗則使用 yf.download ------------------
         df = get_klines_from_supabase([ticker])
         if df is None or df.empty:
-            # ⬇️ 這是你原本的下載代碼，完全保留 ⬇️
             df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
         # --------------------------------------------------------------------------------------
         
         if df.empty or len(df) < 200:
             return None
 
-        # ---------- 資料解析 (完全保留你原本的邏輯) ----------
+        # ---------- 資料解析 ----------
         if isinstance(df.columns, pd.MultiIndex):
             close = df['Close'][ticker]
             high  = df['High'][ticker]
@@ -151,17 +158,24 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         if sum(cond) < 6:
             return None
 
-        # ========== 2. 成交量萎縮（檢查醞釀期，非單日） ==========
+        # ========== 2. 成交量萎縮（VUD 深度解析） ==========
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
         vol_ma50 = vol.rolling(50).mean().iloc[-1] if len(vol) >= 50 else vol_ma20
-        recent_vol_avg = vol.iloc[-10:].mean()
+        
+        recent_vol = vol.iloc[-15:] 
+        recent_vol_avg = recent_vol.mean()
 
-        # 近期均量明顯低於中期均量，代表籌碼沉澱
+        # 條件 A: 整體籌碼沉澱
         vol_dry_up = (recent_vol_avg < vol_ma20 * 0.85) or (vol_ma20 < vol_ma50 * 0.9)
-        if not vol_dry_up:
+        
+        # 條件 B: VUD 安靜點偵測 (嚴格要求至少一天低於 50 日均量的 55%)
+        lowest_vol_recent = float(recent_vol.min())
+        has_quiet_pivot = lowest_vol_recent < (vol_ma50 * 0.55)
+
+        if not (vol_dry_up and has_quiet_pivot):
             return None
 
-        # ========== 3. VCP 波動收縮（改用區間低點邏輯） ==========
+        # ========== 3. VCP 波動收縮（區間低點邏輯） ==========
         windows = [
             close.iloc[-100:-70],
             close.iloc[-85:-55],
@@ -182,7 +196,6 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         if len(valid_ranges) < 2:
             return None
 
-        # 檢查最後一段波動率是否仍處於低檔（未顯著反彈）
         if len(valid_ranges) >= 3:
             last_three = valid_ranges[-3:]
             if valid_ranges[-1] > min(last_three) * 1.1 and valid_ranges[-1] > 0.03:
