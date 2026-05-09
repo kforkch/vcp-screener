@@ -117,10 +117,20 @@ if st.sidebar.button("🚀 執行全球同步掃描"):
             
             st.markdown("### 🎯 潛力標的清單")
             
-            # 💡 優化：套用 DataFrame 樣式與格式化
+            # 💡 優化：全面套用數值格式化，消除多餘的小數點並加入單位
+            format_dict = {
+                "SCTR排名": "{:.1f}", 
+                "價格": "{:.2f}", 
+                "Pivot(樞軸)": "{:.2f}",
+                "SL(ATR停損)": "{:.2f}",
+                "Target(目標3R)": "{:.2f}",
+                "量比": "{:.2f}x",
+                "距離高點%": "{:.2f}%"
+            }
+            
             styled_df = df_sorted.style.map(highlight_status, subset=['狀態'])\
                                        .map(highlight_contraction, subset=['收縮狀態'])\
-                                       .format({"SCTR排名": "{:.1f}", "價格": "{:.2f}", "量比": "{:.2f}x"})
+                                       .format(format_dict)
             
             # 渲染數據表格
             st.dataframe(
