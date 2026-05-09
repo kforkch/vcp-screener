@@ -26,6 +26,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
 
         for ticker in tickers:
             try:
+                # 確保只使用有真實交易紀錄的日子
                 series = data[ticker].dropna() if isinstance(data, pd.DataFrame) else data.dropna()
                 # 嚴格檢查：需要滿足 200 日均線 + lookback
                 if len(series) < 200 + lookback: continue
@@ -75,28 +76,39 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         if _GLOBAL_BULK_KLINE_CACHE is not None and not _GLOBAL_BULK_KLINE_CACHE.empty:
             if isinstance(_GLOBAL_BULK_KLINE_CACHE.columns, pd.MultiIndex):
                 if ticker in _GLOBAL_BULK_KLINE_CACHE.columns.get_level_values(1):
-                    df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=1, axis=1).dropna(how='all')
+                    # 抓取該檔股票的數據，並不做任何錯誤的填充
+                    df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=1, axis=1)
                     from_cache = True
             else:
-                df = _GLOBAL_BULK_KLINE_CACHE.dropna(how='all')
+                df = _GLOBAL_BULK_KLINE_CACHE
                 from_cache = True
         
         if not from_cache or df is None or df.empty:
             time.sleep(0.5) 
             df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
         
+        # ---------- 🛡️ 核心防禦：真實數據過濾 ----------
+        # 1. 剔除所有包含 NaN 的無效交易日（如假期、停牌），只保留真實產生的 K 線
+        df = df.dropna(subset=['Close', 'High', 'Low', 'Volume'])
+        
+        # 2. 數據長度檢定
         if df.empty or len(df) < 200: return None
+        
+        # 3. 停牌與殭屍股防禦：如果最新一個交易日成交量為 0，代表喪失流動性或停牌，直接剔除
+        if df['Volume'].iloc[-1] == 0: return None
 
-        # ---------- 指標計算 ----------
+        # ---------- 指標計算 (基於真實有效數據) ----------
         close = df['Close']
-        high, low, vol = df['High'], df['Low'], df['Volume']
+        high = df['High']
+        low = df['Low']
+        vol = df['Volume']
         curr_p = float(close.iloc[-1])
 
         sma50  = ta.sma(close, 50).iloc[-1]
         sma150 = ta.sma(close, 150).iloc[-1]
         sma200 = ta.sma(close, 200).iloc[-1]
         
-        # 優化：鎖定最近 252 個交易日作為 52 週基準，確保回測或切換週期時邏輯一致
+        # 優化：鎖定最近 252 個實際交易日作為 52 週基準
         low52  = float(close.tail(252).min())
         high52 = float(close.tail(252).max())
 
