@@ -3,13 +3,14 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
+from datetime import datetime, timedelta
 from data_loader import get_sector_cached
 
 # ==================== 🛠️ 數據中台無痛代理代理器 ====================
 def get_klines_from_supabase(tickers):
     """
     優先從 Supabase 中台的 stock_klines 資料表高速載入 K 線。
-    加入「分批檢索 (Chunking)」機制，解決 Warp server timeout 錯誤。
+    已啟用極限輕量化：僅抓取約 240 根 K 線 (350 日曆天)，確保剛好滿足 SMA200 計算。
     """
     try:
         from data_loader import supabase
@@ -17,15 +18,20 @@ def get_klines_from_supabase(tickers):
             return None
         
         all_data = []
-        chunk_size = 50  # 🌟 優化點：將數百檔股票切分為每批 50 檔，避免伺服器超時
+        chunk_size = 20  # 微型批次，確保秒級回應
+        
+        # 🌟 絕對數學極限：350 個日曆天約等於 240 個交易日。
+        # 這是滿足 SMA200 + 20日歷史 SCTR 回看 (200+20=220) 的最小資料量。
+        cutoff_date = (datetime.now() - timedelta(days=350)).strftime('%Y-%m-%d')
         
         for i in range(0, len(tickers), chunk_size):
             chunk = tickers[i:i + chunk_size]
             
-            # 批次向 Supabase 查詢這群股票的 K 線資料
+            # 批次向 Supabase 查詢這群股票的 K 線資料，並進行時間截斷
             res = supabase.table("stock_klines")\
                 .select("ticker, date, open, high, low, close, volume")\
                 .in_("ticker", chunk)\
+                .gte("date", cutoff_date)\
                 .order("date", desc=False)\
                 .execute()
             
@@ -38,7 +44,7 @@ def get_klines_from_supabase(tickers):
         df_all = pd.DataFrame(all_data)
         df_all['date'] = pd.to_datetime(df_all['date'])
         
-        # 重構為相容 yf.download(group_by='column') 格式的 MultiIndex 結構，確保後面完全不用改程式
+        # 重構為相容 yf.download(group_by='column') 格式的 MultiIndex 結構
         pivoted_close = df_all.pivot(index='date', columns='ticker', values='close')
         pivoted_open = df_all.pivot(index='date', columns='ticker', values='open')
         pivoted_high = df_all.pivot(index='date', columns='ticker', values='high')
@@ -80,9 +86,10 @@ def calculate_sctr_ranks(tickers, lookback=20):
         for ticker in tickers:
             try:
                 series = data[ticker].dropna() if isinstance(data, pd.DataFrame) else data.dropna()
+                # 嚴格檢查：只要少於 200 + lookback，即放棄計算
                 if len(series) < 200 + lookback: continue
 
-                # 輔助計算函數 (完全保留邏輯)
+                # 輔助計算函數
                 def get_sctr_raw(sub_series):
                     sma200, sma50 = sub_series.rolling(200).mean().iloc[-1], sub_series.rolling(50).mean().iloc[-1]
                     dist_200, dist_50 = (sub_series.iloc[-1]/sma200-1)*100, (sub_series.iloc[-1]/sma50-1)*100
@@ -196,6 +203,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         if len(valid_ranges) < 2:
             return None
 
+        # 檢查最後一段波動率是否仍處於低檔
         if len(valid_ranges) >= 3:
             last_three = valid_ranges[-3:]
             if valid_ranges[-1] > min(last_three) * 1.1 and valid_ranges[-1] > 0.03:
