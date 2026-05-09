@@ -124,7 +124,9 @@ def run_global_scan():
                 report += f"📊 <b>{market}</b> (篩選出 {len(results)} 檔)\n"
                 for r in results[:5]:
                     link = make_link(r[0])
-                    report += f"• <b>{r[0]}</b> | <a href='{link}'>圖表</a> | SCTR: {r[3]} ({r[6]})\n"
+                    # 💡 增加輸出的詳細程度，顯示實戰所需的 Pivot、停損與價量資訊
+                    report += f"• <b>{r[0]}</b> | <a href='{link}'>圖表</a> | {r[6]} | SCTR: {r[3]}\n"
+                    report += f"  └ 價: <b>{r[1]}</b> | 樞: {r[8]} | 損: {r[9]} | 量比: {r[5]}\n"
                 report += "\n"
         except Exception as e:
             print(f"⚠️ 掃描市場 {market} 失敗: {e}")
@@ -144,7 +146,7 @@ def run_global_scan():
             file_path = os.path.join(report_dir, filename)
             df_full.to_csv(file_path, index=False, encoding='utf-8-sig')
         
-        report += "📁 報告已生成，請參見下方附件。"
+        report += "📁 完整報告已生成，請參見下方附件。"
         send_telegram_alert(report)
         send_telegram_file(file_path)
         print(f"✅ 報表 {file_path} 已發送")
