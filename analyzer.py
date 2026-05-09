@@ -62,7 +62,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
 
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
     """
-    頂級 VCP 偵測：整合 Minervini SEPA 標準與多段波動收縮判定
+    頂級 VCP 偵測：整合 Minervini SEPA 標準與多段波動收縮判定[cite: 10]
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
@@ -90,7 +90,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
         low52, high52 = float(close.tail(252).min()), float(close.tail(252).max())
 
-        # ========== 1. SEPA 趨勢模板 ==========
+        # ========== 1. SEPA 趨勢模板[cite: 10] ==========
         cond = [
             curr_p > sma150 and curr_p > sma200,                      
             sma150 > sma200,                                          
@@ -132,24 +132,12 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         dist_to_pivot = (curr_p / resistance - 1) * 100
         sma20 = ta.sma(close, 20).iloc[-1]
         is_on_trend = curr_p > sma20 * 0.99
-        
-        vol_ratio = round(float(vol.iloc[-1]) / vol_ma20, 2)
-        # 💡 新增：計算近3日平均成交量，用於抓取「爆發前夕」的窒息量
-        vol_3d_avg = vol.iloc[-3:].mean()
 
         status = ""
         if -1.8 <= dist_to_pivot <= 0.3:
-            # 💡【邏輯優化】：若近3日均量低於50日均量的60%，代表賣壓徹底枯竭，未來3-5天爆發機率極高。
-            if vol_3d_avg < (vol_ma50 * 0.6):
-                status = "⚡蓄勢待發 (VUD極度萎縮)"
-            else:
-                status = "⚡蓄勢待發"
+            status = "⚡蓄勢待發"
         elif 0.3 < dist_to_pivot <= 6.0:
-            # 確保剛突破時具備基礎量能
-            if vol_ratio > 1.2:
-                status = "🔥 剛突破"
-            else:
-                return None
+            status = "🔥 剛突破"
         elif 6.0 < dist_to_pivot <= 15.0 and (sctr_val > 90 or sctr_val > sctr_hist) and is_on_trend:
             status = "🚀 強勢續航"
         else:
@@ -161,6 +149,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         # ========== 7. 風險報酬 (3R) ==========
         stop_loss = curr_p - (1.5 * atr)
         target_price = curr_p + (3.0 * (curr_p - stop_loss))
+        vol_ratio = round(float(vol.iloc[-1]) / vol_ma20, 2)
         sector = get_sector_cached(ticker)
 
         return [
