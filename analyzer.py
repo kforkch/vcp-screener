@@ -3,80 +3,15 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
-from datetime import datetime, timedelta
 from data_loader import get_sector_cached
-
-# ==================== 🛠️ 數據中台無痛代理代理器 ====================
-def get_klines_from_supabase(tickers):
-    """
-    優先從 Supabase 中台的 stock_klines 資料表高速載入 K 線。
-    已啟用極限輕量化：僅抓取約 240 根 K 線 (350 日曆天)，確保剛好滿足 SMA200 計算。
-    """
-    try:
-        from data_loader import supabase
-        if supabase is None:
-            return None
-        
-        all_data = []
-        chunk_size = 20  # 微型批次，確保秒級回應
-        
-        # 🌟 絕對數學極限：350 個日曆天約等於 240 個交易日。
-        # 這是滿足 SMA200 + 20日歷史 SCTR 回看 (200+20=220) 的最小資料量。
-        cutoff_date = (datetime.now() - timedelta(days=350)).strftime('%Y-%m-%d')
-        
-        for i in range(0, len(tickers), chunk_size):
-            chunk = tickers[i:i + chunk_size]
-            
-            # 批次向 Supabase 查詢這群股票的 K 線資料，並進行時間截斷
-            res = supabase.table("stock_klines")\
-                .select("ticker, date, open, high, low, close, volume")\
-                .in_("ticker", chunk)\
-                .gte("date", cutoff_date)\
-                .order("date", desc=False)\
-                .execute()
-            
-            if res.data:
-                all_data.extend(res.data)
-                
-        if not all_data:
-            return None
-            
-        df_all = pd.DataFrame(all_data)
-        df_all['date'] = pd.to_datetime(df_all['date'])
-        
-        # 重構為相容 yf.download(group_by='column') 格式的 MultiIndex 結構
-        pivoted_close = df_all.pivot(index='date', columns='ticker', values='close')
-        pivoted_open = df_all.pivot(index='date', columns='ticker', values='open')
-        pivoted_high = df_all.pivot(index='date', columns='ticker', values='high')
-        pivoted_low = df_all.pivot(index='date', columns='ticker', values='low')
-        pivoted_volume = df_all.pivot(index='date', columns='ticker', values='volume')
-        
-        # 建立 MultiIndex 欄位
-        pivoted_close.columns = pd.MultiIndex.from_product([['Close'], pivoted_close.columns])
-        pivoted_open.columns = pd.MultiIndex.from_product([['Open'], pivoted_open.columns])
-        pivoted_high.columns = pd.MultiIndex.from_product([['High'], pivoted_high.columns])
-        pivoted_low.columns = pd.MultiIndex.from_product([['Low'], pivoted_low.columns])
-        pivoted_volume.columns = pd.MultiIndex.from_product([['Volume'], pivoted_volume.columns])
-        
-        combined = pd.concat([pivoted_open, pivoted_high, pivoted_low, pivoted_close, pivoted_volume], axis=1)
-        combined.index.name = 'Date'
-        return combined
-    except Exception as e:
-        print(f"⚠️ 從中台讀取 K 線失敗，將自動降級採用原 yf.download: {e}")
-        return None
-# =======================================================================================
-
 
 def calculate_sctr_ranks(tickers, lookback=20):
     """
     計算當前與 lookback 天前的 SCTR，用來衡量動能是否持續攀升
     """
     try:
-        # ------------------ 🌟 劫持點：優先讀取 Supabase，失敗則使用 yf.download ------------------
-        raw_data = get_klines_from_supabase(tickers)
-        if raw_data is None or raw_data.empty:
-            raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
-        # --------------------------------------------------------------------------------------
+        # 🌟 終極架構優化：徹底解耦 Supabase 讀取，全面回歸 yfinance 實時拉取，根除 Timeout 問題
+        raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
         
         data = raw_data['Close'] if 'Close' in raw_data else raw_data
 
@@ -86,10 +21,10 @@ def calculate_sctr_ranks(tickers, lookback=20):
         for ticker in tickers:
             try:
                 series = data[ticker].dropna() if isinstance(data, pd.DataFrame) else data.dropna()
-                # 嚴格檢查：只要少於 200 + lookback，即放棄計算
+                # 嚴格檢查：需要滿足 200日均線 + lookback
                 if len(series) < 200 + lookback: continue
 
-                # 輔助計算函數
+                # 輔助計算函數 (核心邏輯 100% 保留)
                 def get_sctr_raw(sub_series):
                     sma200, sma50 = sub_series.rolling(200).mean().iloc[-1], sub_series.rolling(50).mean().iloc[-1]
                     dist_200, dist_50 = (sub_series.iloc[-1]/sma200-1)*100, (sub_series.iloc[-1]/sma50-1)*100
@@ -123,11 +58,8 @@ def calculate_sctr_ranks(tickers, lookback=20):
 
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
     try:
-        # ------------------ 🌟 劫持點：優先讀取 Supabase，失敗則使用 yf.download ------------------
-        df = get_klines_from_supabase([ticker])
-        if df is None or df.empty:
-            df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
-        # --------------------------------------------------------------------------------------
+        # 🌟 終極架構優化：單檔股票檢驗亦全面使用 yfinance
+        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
         
         if df.empty or len(df) < 200:
             return None
