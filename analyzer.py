@@ -44,7 +44,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
 
                 sctr_current.append({'ticker': ticker, 'raw': raw_curr})
                 sctr_historical.append({'ticker': ticker, 'raw': raw_hist})
-            except:
+            except Exception as e:
                 continue
 
         if not sctr_current: return {}, {}
@@ -58,7 +58,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
         dict_hist = df_hist.set_index('ticker')['rank'].to_dict()
 
         return dict_curr, dict_hist
-    except:
+    except Exception as e:
         return {}, {}
 
 
@@ -95,8 +95,10 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         sma50  = ta.sma(close, 50).iloc[-1]
         sma150 = ta.sma(close, 150).iloc[-1]
         sma200 = ta.sma(close, 200).iloc[-1]
-        low52  = float(close.min())
-        high52 = float(close.max())
+        
+        # 優化：鎖定最近 252 個交易日作為 52 週基準，確保回測或切換週期時邏輯一致
+        low52  = float(close.tail(252).min())
+        high52 = float(close.tail(252).max())
 
         # ========== 1. 趨勢模板 (SEPA 核心標準) ==========
         cond = [
