@@ -169,7 +169,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         has_quiet_point = (vol.iloc[-max(10, b_days):-1].min() < (vol_ma50 * 0.55)) or (vol.iloc[-1] < vol_ma20 * 0.50)
 
         # ========== 3. 動態波浪與底底高 (Higher Lows) 驗證 ==========
-        df_recent = df.tail(60) # 檢測最近約半年的轉折波浪
+        df_recent = df.tail(63) # 檢測最近約半年的轉折波浪
         is_higher_lows, is_contracting, dynamic_pivot, last_amplitude = detect_vcp_waves_and_higher_lows(df_recent, p_len=4)
 
         if not (is_higher_lows and is_contracting):
