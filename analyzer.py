@@ -60,9 +60,61 @@ def calculate_sctr_ranks(tickers, lookback=20):
         return {}, {}
 
 
+def detect_vcp_waves_and_higher_lows(df_sub, p_len=1):
+    """
+    動態波浪與樞紐分析引擎 (復刻 Pine Script Pivots 與嚴格底底高邏輯)
+    """
+    highs = df_sub['High'].values
+    lows = df_sub['Low'].values
+    n = len(df_sub)
+    
+    pivot_highs = [] # (index, price)
+    pivot_lows = []  # (index, price)
+    
+    # 搜尋區域 Pivot High / Pivot Low
+    for i in range(p_len, n - p_len):
+        if highs[i] == max(highs[i - p_len : i + p_len + 1]):
+            pivot_highs.append((i, highs[i]))
+        if lows[i] == min(lows[i - p_len : i + p_len + 1]):
+            pivot_lows.append((i, lows[i]))
+            
+    if len(pivot_lows) < 2:
+        return False, False, df_sub['High'].iloc[-20:].max(), 0.0
+
+    # 1. 驗證嚴格「底底高 (Higher Lows)」(取最新 3 個低點)
+    recent_low_prices = [p[1] for p in pivot_lows[-3:]]
+    is_higher_lows = True
+    for k in range(len(recent_low_prices) - 1):
+        if recent_low_prices[k+1] <= recent_low_prices[k]:
+            is_higher_lows = False
+            break
+
+    # 2. 驗證波動收縮 (Contraction Amplitudes T1 > T2)
+    contractions = []
+    min_len = min(len(pivot_highs), len(pivot_lows))
+    for idx in range(1, min_len + 1):
+        ph = pivot_highs[-idx][1]
+        pl = pivot_lows[-idx][1]
+        if ph > pl:
+            contractions.append((ph - pl) / ph)
+            
+    is_contracting = False
+    if len(contractions) >= 2:
+        # 最新一次收縮幅度必須小於前一次，且最新收縮幅度 < 15%
+        if contractions[0] < contractions[1] and contractions[0] <= 0.15:
+            is_contracting = True
+    elif len(contractions) == 1 and contractions[0] <= 0.12:
+        is_contracting = True
+
+    # 最新樞紐阻力位 (Pivot Price)
+    pivot_price = pivot_highs[-1][1] if pivot_highs else float(df_sub['High'].iloc[-10:].max())
+
+    return is_higher_lows, is_contracting, pivot_price, (contractions[0] if contractions else 0.0)
+
+
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
     """
-    頂級 VCP 偵測：整合 Minervini SEPA 標準與多段波動收縮判定[cite: 10]
+    頂級 VCP 偵測：整合 Minervini SEPA 標準與嚴格底底高波動收縮判定
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
@@ -87,29 +139,41 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         # 指標計算
         close, high, low, vol = df['Close'], df['High'], df['Low'], df['Volume']
         curr_p = float(close.iloc[-1])
-        sma50, sma150, sma200 = ta.sma(close, 50).iloc[-1], ta.sma(close, 150).iloc[-1], ta.sma(close, 200).iloc[-1]
+        sma50_series = ta.sma(close, 50)
+        sma150_series = ta.sma(close, 150)
+        sma200_series = ta.sma(close, 200)
+
+        sma50 = sma50_series.iloc[-1]
+        sma150 = sma150_series.iloc[-1]
+        sma200 = sma200_series.iloc[-1]
+        sma200_20d_ago = sma200_series.iloc[-20] if len(sma200_series) >= 20 else sma200
+
         low52, high52 = float(close.tail(252).min()), float(close.tail(252).max())
 
-        # ========== 1. SEPA 趨勢模板[cite: 10] ==========
+        # ========== 1. 嚴格 SEPA 趨勢模板 ==========
         cond = [
-            curr_p > sma150 and curr_p > sma200,                      
-            sma150 > sma200,                                          
-            sma50 > sma150 or (sma50 > sma200 and sma50 > sma150*0.98),
-            curr_p > sma50 * 0.98,                                    
-            curr_p >= low52 * 1.25,                                   
-            curr_p >= high52 * 0.70                                   
+            curr_p > sma150 and curr_p > sma200,                        # 1. 價格高於 150/200 日線
+            sma150 > sma200,                                            # 2. 150日線高於 200日線
+            sma200 > sma200_20d_ago,                                    # 3. 200日線呈現上揚趨勢 (核心修復)
+            sma50 > sma150 or (sma50 > sma200 and sma50 > sma150*0.98), # 4. 50日線多頭排列
+            curr_p > sma50 * 0.98,                                      # 5. 價格站穩 50日線
+            curr_p >= low52 * 1.25,                                     # 6. 較 52 週低點上漲至少 25%
+            curr_p >= high52 * 0.70                                     # 7. 距離 52 週高點 30% 以內
         ]
-        if sum(cond) < 6: return None
+        if sum(cond) < 7: return None
 
-        # ========== 2. VCP 成交量枯竭 (Quiet Point) ==========
-        vol_ma50, vol_ma20 = vol.rolling(50).mean().iloc[-1], vol.rolling(20).mean().iloc[-1]
-        has_quiet_point = vol.iloc[-max(10, b_days):-1].min() < (vol_ma50 * 0.85)
+        # ========== 2. 嚴格 VCP 成交量枯竭 (VDU / Quiet Point) ==========
+        vol_ma50 = vol.rolling(50).mean().iloc[-1]
+        vol_ma20 = vol.rolling(20).mean().iloc[-1]
+        # VDU 門檻收緊：近 10 日內出現成交量低於 50日均量 55% 或低於 20日均量 50%
+        has_quiet_point = (vol.iloc[-max(10, b_days):-1].min() < (vol_ma50 * 0.55)) or (vol.iloc[-1] < vol_ma20 * 0.50)
 
-        # ========== 3. 波動收縮判定 ==========
-        def get_v(series): return (series.max() - series.min()) / series.min()
-        v1 = get_v(close.iloc[-40:-20]) 
-        v3 = get_v(close.iloc[-10:])    
-        is_contracting = v3 < 0.15 and v3 <= v1 * 1.25
+        # ========== 3. 動態波浪與底底高 (Higher Lows) 驗證 ==========
+        df_recent = df.tail(60) # 檢測最近約半年的轉折波浪
+        is_higher_lows, is_contracting, dynamic_pivot, last_amplitude = detect_vcp_waves_and_higher_lows(df_recent, p_len=4)
+
+        if not (is_higher_lows and is_contracting):
+            return None
 
         # ========== 4. 緊湊度評級 (ATR 基準) ==========
         atr = ta.atr(high, low, close, length=14).iloc[-1]
@@ -128,7 +192,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         if sctr_val < 65: return None
 
         # ========== 6. 狀態判定 (Pivot 樞軸點) ==========
-        resistance = float(high.iloc[-(b_days+2):-2].max())
+        resistance = float(dynamic_pivot)
         dist_to_pivot = (curr_p / resistance - 1) * 100
         sma20 = ta.sma(close, 20).iloc[-1]
         is_on_trend = curr_p > sma20 * 0.99
@@ -144,7 +208,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
             return None
 
         if b_only and status != "🔥 剛突破": return None
-        if not (has_quiet_point or is_contracting): return None
+        if not has_quiet_point: return None
 
         # ========== 7. 風險報酬 (3R) ==========
         stop_loss = curr_p - (1.5 * atr)
