@@ -86,7 +86,7 @@ def get_stock_list(market):
         
         # 美股 (Nasdaq 100)
         elif market == "美股 (Nasdaq 100)":
-            url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
+            url = 'https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies'
             tables = pd.read_html(io.StringIO(requests.get(url, headers=headers, timeout=15).text))
             for t in tables:
                 if 'Ticker' in t.columns: return t['Ticker'].tolist(), "^IXIC"
