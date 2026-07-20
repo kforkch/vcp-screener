@@ -60,7 +60,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
         return {}, {}
 
 
-def detect_vcp_waves_and_higher_lows(df_sub, p_len=3):
+def detect_vcp_waves_and_higher_lows(df_sub, p_len=4):
     """
     動態波浪與樞紐分析引擎 (復刻 Pine Script Pivots 與嚴格底底高邏輯)
     """
@@ -170,7 +170,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
 
         # ========== 3. 動態波浪與底底高 (Higher Lows) 驗證 ==========
         df_recent = df.tail(120) # 檢測最近約半年的轉折波浪
-        is_higher_lows, is_contracting, dynamic_pivot, last_amplitude = detect_vcp_waves_and_higher_lows(df_recent, p_len=3)
+        is_higher_lows, is_contracting, dynamic_pivot, last_amplitude = detect_vcp_waves_and_higher_lows(df_recent, p_len=4)
 
         if not (is_higher_lows and is_contracting):
             return None
