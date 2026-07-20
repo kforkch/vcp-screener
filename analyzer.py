@@ -60,7 +60,7 @@ def calculate_sctr_ranks(tickers, lookback=20):
         return {}, {}
 
 
-def detect_vcp_waves_and_higher_lows(df_sub, p_len=2):
+def detect_vcp_waves_and_higher_lows(df_sub, p_len=3):
     """
     動態波浪與樞紐分析引擎 (復刻 Pine Script Pivots 與嚴格底底高邏輯)
     """
