@@ -3,21 +3,24 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
-import time
+import threading
 from data_loader import get_sector_cached
 
-# 🌟 建立全局快取變數，用於儲存批量下載的 K 線，徹底迴避 Rate Limit
+# 🌟 機構級線程安全快取機制
 _GLOBAL_BULK_KLINE_CACHE = None
+_CACHE_LOCK = threading.Lock()
 
 def calculate_sctr_ranks(tickers, lookback=20):
     """
-    計算當前與 lookback 天前的 SCTR，用來衡量動能是否持續攀升
+    計算當前與 lookback 天前的 SCTR，用來衡量動態動能攀升
+    並建立全局 Safe Bulk K-Line 快取
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
-        # 🌟 透過 Bulk Download 一次性抓取所有股票資料
         raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
-        _GLOBAL_BULK_KLINE_CACHE = raw_data
+        
+        with _CACHE_LOCK:
+            _GLOBAL_BULK_KLINE_CACHE = raw_data
         
         if raw_data.empty:
             return {}, {}
@@ -94,6 +97,33 @@ def calculate_sctr_ranks(tickers, lookback=20):
         return {}, {}
 
 
+def check_pocket_pivot(df):
+    """
+    機構級口袋買點 (Pocket Pivot) 檢測：
+    當日陽線成交量 > 過去 10 個交易日內的最大陰線成交量
+    """
+    if len(df) < 11:
+        return False
+    
+    close = df['Close'].values
+    open_p = df['Open'].values
+    vol = df['Volume'].values
+
+    # 今日是否為陽線
+    is_up_day = close[-1] > open_p[-1]
+    if not is_up_day:
+        return False
+
+    # 找出過去 10 日 (不含今日) 的最大陰線成交量
+    down_day_volumes = [
+        vol[-i] for i in range(2, 12) 
+        if close[-i] < open_p[-i]
+    ]
+    
+    max_down_vol = max(down_day_volumes) if down_day_volumes else 0
+    return vol[-1] > max_down_vol
+
+
 def detect_vcp_waves_and_higher_lows(df_sub, p_len=3):
     """
     動態波浪與樞紐分析引擎 (復刻 Pine Script Pivots 與嚴格底底高邏輯)
@@ -124,12 +154,11 @@ def detect_vcp_waves_and_higher_lows(df_sub, p_len=3):
             break
 
     # 2. 驗證波動收縮 (Contraction Amplitudes T1 > T2)
-    # 修正配對邏輯：依據時間戳匹配 High 隨後的 Low，精確計算每段 Pullback 幅度
     contractions = []
     for ph_idx, ph_val in reversed(pivot_highs):
         matching_lows = [pl for pl in pivot_lows if pl[0] > ph_idx]
         if matching_lows:
-            pl_idx, pl_val = matching_lows[0] # 取得 High 之後的第一個 Low
+            pl_idx, pl_val = matching_lows[0] # 取得 High 隨後的第一個 Low
             if ph_val > pl_val:
                 contractions.append((ph_val - pl_val) / ph_val)
 
@@ -149,38 +178,46 @@ def detect_vcp_waves_and_higher_lows(df_sub, p_len=3):
 
 def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
     """
-    頂級 VCP 偵測：整合 Minervini SEPA 標準與嚴格底底高波動收縮判定
+    機構級 VCP 偵測核心：整合 SEPA 趨勢模板、機構流動性門檻、口袋買點與嚴格 VCP 波浪
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
-        # 數據提取 (具備雙層 Level 相容性機制)
         df = None
         from_cache = False
-        if _GLOBAL_BULK_KLINE_CACHE is not None and not _GLOBAL_BULK_KLINE_CACHE.empty:
-            try:
-                if isinstance(_GLOBAL_BULK_KLINE_CACHE.columns, pd.MultiIndex):
-                    if ticker in _GLOBAL_BULK_KLINE_CACHE.columns.get_level_values(1):
-                        df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=1, axis=1)
+        
+        with _CACHE_LOCK:
+            if _GLOBAL_BULK_KLINE_CACHE is not None and not _GLOBAL_BULK_KLINE_CACHE.empty:
+                try:
+                    if isinstance(_GLOBAL_BULK_KLINE_CACHE.columns, pd.MultiIndex):
+                        if ticker in _GLOBAL_BULK_KLINE_CACHE.columns.get_level_values(1):
+                            df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=1, axis=1)
+                            from_cache = True
+                        elif ticker in _GLOBAL_BULK_KLINE_CACHE.columns.get_level_values(0):
+                            df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=0, axis=1)
+                            from_cache = True
+                    else:
+                        df = _GLOBAL_BULK_KLINE_CACHE
                         from_cache = True
-                    elif ticker in _GLOBAL_BULK_KLINE_CACHE.columns.get_level_values(0):
-                        df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=0, axis=1)
-                        from_cache = True
-                else:
-                    df = _GLOBAL_BULK_KLINE_CACHE
-                    from_cache = True
-            except Exception:
-                from_cache = False
+                except Exception:
+                    from_cache = False
         
         if not from_cache or df is None or df.empty:
             df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
         
-        df = df.dropna(subset=['Close', 'High', 'Low', 'Volume'])
+        df = df.dropna(subset=['Open', 'Close', 'High', 'Low', 'Volume'])
         if df.empty or len(df) < 200 or df['Volume'].iloc[-1] == 0: 
+            return None
+
+        # ========== 0. 機構級流動性過濾 (ADV20 流動性門檻) ==========
+        curr_p = float(df['Close'].iloc[-1])
+        adv20_turnover = (df['Volume'] * df['Close']).tail(20).mean()
+        # 港股/A股 至少 1000萬，美股至少 200萬美元日均成交額，避開無流動性莊股
+        min_adv = 10000000 if (".HK" in ticker or ".SS" in ticker or ".SZ" in ticker) else 2000000
+        if adv20_turnover < min_adv:
             return None
 
         # 指標計算
         close, high, low, vol = df['Close'], df['High'], df['Low'], df['Volume']
-        curr_p = float(close.iloc[-1])
         sma50_series = ta.sma(close, 50)
         sma150_series = ta.sma(close, 150)
         sma200_series = ta.sma(close, 200)
@@ -195,7 +232,7 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
 
         low52, high52 = float(close.tail(252).min()), float(close.tail(252).max())
 
-        # ========== 1. 嚴格 SEPA 趨勢模板 ==========
+        # ========== 1. 嚴格 SEPA 趨勢模板 (Trend Template) ==========
         cond = [
             curr_p > sma150 and curr_p > sma200,                        # 1. 價格高於 150/200 日線
             sma150 > sma200,                                            # 2. 150日線高於 200日線
@@ -208,14 +245,19 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         if sum(cond) < 7: 
             return None
 
-        # ========== 2. 嚴格 VCP 成交量枯竭 (VDU / Quiet Point) ==========
+        # ========== 2. 嚴格 VCP 成交量枯竭 (VDU) + 口袋買點 (Pocket Pivot) ==========
         vol_ma50 = vol.rolling(50).mean().iloc[-1]
         vol_ma20 = vol.rolling(20).mean().iloc[-1]
-        # VDU 門檻收緊：近 10 日內出現成交量低於 50日均量 55% 或低於 20日均量 50%
+        
         has_quiet_point = (vol.iloc[-max(10, b_days):-1].min() < (vol_ma50 * 0.55)) or (vol.iloc[-1] < vol_ma20 * 0.50)
+        has_pocket_pivot = check_pocket_pivot(df)
+
+        # 必須滿足 VDU 成交量極度乾涸，或是觸發口袋買點
+        if not (has_quiet_point or has_pocket_pivot):
+            return None
 
         # ========== 3. 動態波浪與底底高 (Higher Lows) 驗證 ==========
-        df_recent = df.tail(63) # 檢測最近約半年的轉折波浪
+        df_recent = df.tail(63) 
         is_higher_lows, is_contracting, dynamic_pivot, last_amplitude = detect_vcp_waves_and_higher_lows(df_recent, p_len=3)
 
         if not (is_higher_lows and is_contracting):
@@ -252,14 +294,14 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
             status = "⚡蓄勢待發"
         elif 0.3 < dist_to_pivot <= 6.0:
             status = "🔥 剛突破"
+            if has_pocket_pivot:
+                status = "🔥 剛突破 (Pocket Pivot)"
         elif 6.0 < dist_to_pivot <= 15.0 and (sctr_val > 90 or sctr_val > sctr_hist) and is_on_trend:
             status = "🚀 強勢續航"
         else:
             return None
 
-        if b_only and status != "🔥 剛突破": 
-            return None
-        if not has_quiet_point: 
+        if b_only and "剛突破" not in status: 
             return None
 
         # ========== 7. 風險報酬 (3R) ==========
