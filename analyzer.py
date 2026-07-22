@@ -19,23 +19,56 @@ def calculate_sctr_ranks(tickers, lookback=20):
         raw_data = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
         _GLOBAL_BULK_KLINE_CACHE = raw_data
         
-        data = raw_data['Close'] if 'Close' in raw_data else raw_data
+        if raw_data.empty:
+            return {}, {}
+
+        # 安全處理 MultiIndex 結構 (yfinance 版本相容性增強)
+        if isinstance(raw_data.columns, pd.MultiIndex):
+            if 'Close' in raw_data.columns.get_level_values(0):
+                data = raw_data['Close']
+            elif 'Close' in raw_data.columns.get_level_values(1):
+                data = raw_data.xs('Close', axis=1, level=1)
+            else:
+                data = raw_data
+        else:
+            data = raw_data['Close'] if 'Close' in raw_data else raw_data
 
         sctr_current = []
         sctr_historical = []
 
         for ticker in tickers:
             try:
-                series = data[ticker].dropna() if isinstance(data, pd.DataFrame) else data.dropna()
-                if len(series) < 200 + lookback: continue
+                if isinstance(data, pd.DataFrame):
+                    if ticker not in data.columns:
+                        continue
+                    series = data[ticker].dropna()
+                else:
+                    series = data.dropna()
+
+                if len(series) < 200 + lookback: 
+                    continue
 
                 # SEPA 趨勢排名核心算法
                 def get_sctr_raw(sub_series):
-                    sma200, sma50 = sub_series.rolling(200).mean().iloc[-1], sub_series.rolling(50).mean().iloc[-1]
-                    dist_200, dist_50 = (sub_series.iloc[-1]/sma200-1)*100, (sub_series.iloc[-1]/sma50-1)*100
-                    roc125, roc20 = (sub_series.iloc[-1]/sub_series.iloc[-125]-1)*100, (sub_series.iloc[-1]/sub_series.iloc[-20]-1)*100
-                    rsi = ta.rsi(sub_series, length=14).iloc[-1]
-                    return (dist_200*0.3 + roc125*0.3) + (dist_50*0.15 + roc20*0.15) + (rsi*0.1)
+                    sma200 = sub_series.rolling(200).mean().iloc[-1]
+                    sma50 = sub_series.rolling(50).mean().iloc[-1]
+                    
+                    if sma200 == 0 or sma50 == 0 or pd.isna(sma200) or pd.isna(sma50):
+                        return 0.0
+
+                    dist_200 = (sub_series.iloc[-1] / sma200 - 1) * 100
+                    dist_50 = (sub_series.iloc[-1] / sma50 - 1) * 100
+
+                    p_125 = sub_series.iloc[-125] if len(sub_series) >= 125 else sub_series.iloc[0]
+                    p_20 = sub_series.iloc[-20] if len(sub_series) >= 20 else sub_series.iloc[0]
+
+                    roc125 = (sub_series.iloc[-1] / p_125 - 1) * 100 if p_125 != 0 else 0
+                    roc20 = (sub_series.iloc[-1] / p_20 - 1) * 100 if p_20 != 0 else 0
+
+                    rsi_series = ta.rsi(sub_series, length=14)
+                    rsi = rsi_series.iloc[-1] if rsi_series is not None and not rsi_series.empty else 50.0
+
+                    return (dist_200 * 0.3 + roc125 * 0.3) + (dist_50 * 0.15 + roc20 * 0.15) + (rsi * 0.1)
 
                 raw_curr = get_sctr_raw(series)
                 raw_hist = get_sctr_raw(series.iloc[:-lookback])
@@ -45,7 +78,8 @@ def calculate_sctr_ranks(tickers, lookback=20):
             except Exception:
                 continue
 
-        if not sctr_current: return {}, {}
+        if not sctr_current: 
+            return {}, {}
 
         df_curr = pd.DataFrame(sctr_current)
         df_curr['rank'] = df_curr['raw'].rank(pct=True) * 99.9
@@ -90,17 +124,18 @@ def detect_vcp_waves_and_higher_lows(df_sub, p_len=3):
             break
 
     # 2. 驗證波動收縮 (Contraction Amplitudes T1 > T2)
+    # 修正配對邏輯：依據時間戳匹配 High 隨後的 Low，精確計算每段 Pullback 幅度
     contractions = []
-    min_len = min(len(pivot_highs), len(pivot_lows))
-    for idx in range(1, min_len + 1):
-        ph = pivot_highs[-idx][1]
-        pl = pivot_lows[-idx][1]
-        if ph > pl:
-            contractions.append((ph - pl) / ph)
-            
+    for ph_idx, ph_val in reversed(pivot_highs):
+        matching_lows = [pl for pl in pivot_lows if pl[0] > ph_idx]
+        if matching_lows:
+            pl_idx, pl_val = matching_lows[0] # 取得 High 之後的第一個 Low
+            if ph_val > pl_val:
+                contractions.append((ph_val - pl_val) / ph_val)
+
     is_contracting = False
     if len(contractions) >= 2:
-        # 最新一次收縮幅度必須小於前一次，且最新收縮幅度 < 15%
+        # 最新一次收縮幅度必須小於前一次，且最新收縮幅度 <= 15%
         if contractions[0] < contractions[1] and contractions[0] <= 0.15:
             is_contracting = True
     elif len(contractions) == 1 and contractions[0] <= 0.12:
@@ -118,23 +153,30 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
     """
     global _GLOBAL_BULK_KLINE_CACHE
     try:
-        # 數據提取
+        # 數據提取 (具備雙層 Level 相容性機制)
         df = None
         from_cache = False
         if _GLOBAL_BULK_KLINE_CACHE is not None and not _GLOBAL_BULK_KLINE_CACHE.empty:
-            if isinstance(_GLOBAL_BULK_KLINE_CACHE.columns, pd.MultiIndex):
-                if ticker in _GLOBAL_BULK_KLINE_CACHE.columns.get_level_values(1):
-                    df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=1, axis=1)
+            try:
+                if isinstance(_GLOBAL_BULK_KLINE_CACHE.columns, pd.MultiIndex):
+                    if ticker in _GLOBAL_BULK_KLINE_CACHE.columns.get_level_values(1):
+                        df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=1, axis=1)
+                        from_cache = True
+                    elif ticker in _GLOBAL_BULK_KLINE_CACHE.columns.get_level_values(0):
+                        df = _GLOBAL_BULK_KLINE_CACHE.xs(ticker, level=0, axis=1)
+                        from_cache = True
+                else:
+                    df = _GLOBAL_BULK_KLINE_CACHE
                     from_cache = True
-            else:
-                df = _GLOBAL_BULK_KLINE_CACHE
-                from_cache = True
+            except Exception:
+                from_cache = False
         
         if not from_cache or df is None or df.empty:
             df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
         
         df = df.dropna(subset=['Close', 'High', 'Low', 'Volume'])
-        if df.empty or len(df) < 200 or df['Volume'].iloc[-1] == 0: return None
+        if df.empty or len(df) < 200 or df['Volume'].iloc[-1] == 0: 
+            return None
 
         # 指標計算
         close, high, low, vol = df['Close'], df['High'], df['Low'], df['Volume']
@@ -142,6 +184,9 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         sma50_series = ta.sma(close, 50)
         sma150_series = ta.sma(close, 150)
         sma200_series = ta.sma(close, 200)
+
+        if sma50_series is None or sma150_series is None or sma200_series is None:
+            return None
 
         sma50 = sma50_series.iloc[-1]
         sma150 = sma150_series.iloc[-1]
@@ -154,13 +199,14 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         cond = [
             curr_p > sma150 and curr_p > sma200,                        # 1. 價格高於 150/200 日線
             sma150 > sma200,                                            # 2. 150日線高於 200日線
-            sma200 > sma200_20d_ago,                                    # 3. 200日線呈現上揚趨勢 (核心修復)
+            sma200 > sma200_20d_ago,                                    # 3. 200日線呈現上揚趨勢
             sma50 > sma150 or (sma50 > sma200 and sma50 > sma150*0.98), # 4. 50日線多頭排列
             curr_p > sma50 * 0.98,                                      # 5. 價格站穩 50日線
             curr_p >= low52 * 1.25,                                     # 6. 較 52 週低點上漲至少 25%
             curr_p >= high52 * 0.70                                     # 7. 距離 52 週高點 30% 以內
         ]
-        if sum(cond) < 7: return None
+        if sum(cond) < 7: 
+            return None
 
         # ========== 2. 嚴格 VCP 成交量枯竭 (VDU / Quiet Point) ==========
         vol_ma50 = vol.rolling(50).mean().iloc[-1]
@@ -176,7 +222,10 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
             return None
 
         # ========== 4. 緊湊度評級 (ATR 基準) ==========
-        atr = ta.atr(high, low, close, length=14).iloc[-1]
+        atr_series = ta.atr(high, low, close, length=14)
+        if atr_series is None or atr_series.empty:
+            return None
+        atr = atr_series.iloc[-1]
         w1_range = close.iloc[-5:].max() - close.iloc[-5:].min()
         
         if w1_range <= 1.5 * atr:
@@ -189,7 +238,8 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         # ========== 5. SCTR 動能要求 ==========
         sctr_val = round(sctr_map.get(ticker, 0), 1)
         sctr_hist = round(sctr_hist_map.get(ticker, 0), 1)
-        if sctr_val < 65: return None
+        if sctr_val < 65: 
+            return None
 
         # ========== 6. 狀態判定 (Pivot 樞軸點) ==========
         resistance = float(dynamic_pivot)
@@ -207,13 +257,15 @@ def check_vcp_advanced(ticker, sctr_map, sctr_hist_map, b_only, b_days):
         else:
             return None
 
-        if b_only and status != "🔥 剛突破": return None
-        if not has_quiet_point: return None
+        if b_only and status != "🔥 剛突破": 
+            return None
+        if not has_quiet_point: 
+            return None
 
         # ========== 7. 風險報酬 (3R) ==========
         stop_loss = curr_p - (1.5 * atr)
         target_price = curr_p + (3.0 * (curr_p - stop_loss))
-        vol_ratio = round(float(vol.iloc[-1]) / vol_ma20, 2)
+        vol_ratio = round(float(vol.iloc[-1]) / vol_ma20, 2) if vol_ma20 > 0 else 1.0
         sector = get_sector_cached(ticker)
 
         return [
